@@ -1,192 +1,140 @@
-<!DOCTYPE html>
-<html>
+<!doctype html>
+<html lang="en">
   <head>
     <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Simple Web Image Editor</title>
-    <link
-      href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/css/bootstrap.min.css"
-      rel="stylesheet"
-      integrity="sha384-EVSTQN3/azprG1Anm3QDgpJLIm9Nao0Yz1ztcQTwFspd3yD65VohhpuuCOmLASjC"
-      crossorigin="anonymous"
-    />
     <link rel="stylesheet" href="./styles.css" />
-    <link rel="icon" type="image/x-icon" href="/assets/images/favicon.png" />
+    <link rel="icon" type="image/x-icon" href="./assets/images/favicon.png" />
   </head>
 
   <body>
     <header class="panel">
-      <div id="controls" class="controls no-events">
-        <div class="control-item">
-          <div class="dropdown">
-            <div
-              id="dropdownMenuButton1"
-              type="button"
-              data-bs-toggle="dropdown"
-              aria-haspopup="true"
-              aria-expanded="false"
-            >
-              <li>
-                <img src="./assets/images/draw.svg" alt="draw icon" />
-                <div class="text">DRAW</div>
-              </li>
-            </div>
-            <div class="dropdown-menu" aria-labelledby="dropdownMenuButton1">
-              <button class="dropdown-item" id="penDraw">Pen</button>
-              <button class="dropdown-item" id="lineDraw">Line</button>
-              <button class="dropdown-item" id="rectangleDraw">
-                Rectangle
-              </button>
-              <button class="dropdown-item" id="ellipseDraw">Ellipse</button>
-            </div>
+      <fieldset id="controls" class="controls" aria-label="Image tools" disabled>
+        <details class="control-item menu-control">
+          <summary class="tool-button">
+            <img src="./assets/images/draw.svg" alt="" />
+            <span>Draw</span>
+          </summary>
+          <div class="tool-menu">
+            <button type="button" id="penDraw">Pen</button>
+            <button type="button" id="lineDraw">Line</button>
+            <button type="button" id="rectangleDraw">Rectangle</button>
+            <button type="button" id="ellipseDraw">Ellipse</button>
           </div>
-        </div>
-        <div class="control-item" id="cropButton">
-          <li>
-            <img src="./assets/images/crop-symbol.svg" alt="crop icon" />
-            <div class="text">CROP</div>
-          </li>
-        </div>
-        <div class="control-item">
-          <div
-            type="button"
-            data-bs-toggle="modal"
-            data-bs-target="#resolutionModal"
-          >
-            <li>
-              <img src="./assets/images/resize.svg" alt="resize icon" />
-              <div class="text">RESIZE</div>
-            </li>
-          </div>
-        </div>
-        <div class="control-item">
-          <div class="dropdown">
-            <div
-              id="dropdownMenu3"
-              data-bs-toggle="dropdown"
-              aria-haspopup="true"
-              aria-expanded="false"
-            >
-              <li>
-                <img src="./assets/images/filter.svg" alt="filter icon" />
-                <div class="text">FILTER</div>
-              </li>
-            </div>
-            <div class="dropdown-menu" aria-labelledby="dropdownMenu3">
-              <button class="dropdown-item" type="button" id="grayscale">
-                Grayscale
-              </button>
-              <button class="dropdown-item" type="button" id="threshold">
-                Threshold
-              </button>
-              <button class="dropdown-item" type="button" id="sephia">
-                Sephia
-              </button>
-              <button class="dropdown-item" type="button" id="invert">
-                Invert Colors
-              </button>
-            </div>
-          </div>
-        </div>
+        </details>
 
-        <div class="control-item" id="undoButton">
-          <li>
-            <img src="./assets/images/undo.svg" alt="undo icon" />
-            <div class="text">UNDO</div>
-          </li>
-        </div>
-        <div class="control-item" id="redoButton">
-          <li>
-            <img src="./assets/images/redo.svg" alt="redo icon" />
-            <div class="text">REDO</div>
-          </li>
-        </div>
-        <div class="control-item">
-          <a id="linkDownload" href="#" download="processedImage.png">
-            <li>
-              <img src="./assets/images/download.svg" alt="download icon" />
-              <div class="text">SAVE</div>
-            </li>
-          </a>
-        </div>
-      </div>
+        <button type="button" class="control-item tool-button" id="cropButton">
+          <img src="./assets/images/crop-symbol.svg" alt="" />
+          <span>Crop</span>
+        </button>
+
+        <button
+          type="button"
+          class="control-item tool-button"
+          id="resizeButton"
+        >
+          <img src="./assets/images/resize.svg" alt="" />
+          <span>Resize</span>
+        </button>
+
+        <details class="control-item menu-control">
+          <summary class="tool-button">
+            <img src="./assets/images/filter.svg" alt="" />
+            <span>Filter</span>
+          </summary>
+          <div class="tool-menu">
+            <button type="button" id="grayscale">Grayscale</button>
+            <button type="button" id="threshold">Threshold</button>
+            <button type="button" id="sepia">Sepia</button>
+            <button type="button" id="invert">Invert colors</button>
+          </div>
+        </details>
+
+        <button type="button" class="control-item tool-button" id="undoButton">
+          <img src="./assets/images/undo.svg" alt="" />
+          <span>Undo</span>
+        </button>
+
+        <button type="button" class="control-item tool-button" id="redoButton">
+          <img src="./assets/images/redo.svg" alt="" />
+          <span>Redo</span>
+        </button>
+
+        <button
+          type="button"
+          class="control-item tool-button"
+          id="downloadButton"
+        >
+          <img src="./assets/images/download.svg" alt="" />
+          <span>Save</span>
+        </button>
+      </fieldset>
     </header>
 
-    <div id="dragAndDropZone" class="img-area text-center">
+    <main id="dragAndDropZone" class="img-area">
       <div class="drag-helper">
-        <img src="./assets/images/dragImg.png" class="img-fluid" />
-        <h5>Drag your picture here to start editing.</h5>
+        <img
+          src="./assets/images/dragImg.png"
+          class="drag-image"
+          alt=""
+        />
+        <h1>Edit an image</h1>
+        <p>Drag a picture anywhere onto this page, or choose a local file.</p>
+        <label class="upload-button">
+          Choose image
+          <input id="fileInput" type="file" accept="image/*" />
+        </label>
       </div>
+
+      <p id="appStatus" class="app-status" role="status" aria-live="polite"></p>
+
       <div id="canvasStack" class="canvas-stack" hidden>
         <canvas id="imageProcessed"></canvas>
         <canvas id="imageOverlay" aria-label="Image editing canvas"></canvas>
       </div>
-    </div>
+    </main>
 
-    <!-- Modal resize resolution -->
-    <div
-      class="modal fade"
-      id="resolutionModal"
-      tabindex="-1"
-      role="dialog"
-      aria-labelledby="exampleModalLabel"
-      aria-hidden="true"
-    >
-      <div class="modal-dialog">
-        <div class="modal-content">
-          <div class="modal-header">
-            <h5 class="modal-title" id="exampleModalLabel">Resolution</h5>
-            <button
-              type="button"
-              class="btn-close"
-              data-bs-dismiss="modal"
-              aria-label="Close"
-            />
-          </div>
-          <div class="modal-body">
-            <div id="modifyResolution">
-              <div class="form-group">
-                <div class="custom-control custom-checkbox">
-                  <input
-                    type="checkbox"
-                    class="custom-control-input"
-                    checked="checked"
-                    id="checkbox-img-ratio"
-                  />
-                  <label class="custom-control-label" for="checkbox-img-ratio"
-                    >Keep the image ratio</label
-                  >
-                </div>
-              </div>
-              <div class="form-group">
-                <label for="width-size" class="col-form-label">Width:</label>
-                <input type="number" class="form-control" id="width-size" />
-              </div>
-              <div class="form-group">
-                <label for="height-size" class="col-form-label">Height:</label>
-                <input type="number" class="form-control" id="height-size" />
-              </div>
-            </div>
-          </div>
-          <div class="modal-footer">
-            <button
-              type="button"
-              class="btn btn-secondary"
-              data-bs-dismiss="modal"
-            >
-              Close
-            </button>
-            <button type="button" class="btn btn-primary" id="saveResolution">
-              Save changes
-            </button>
-          </div>
+    <dialog id="resolutionDialog" aria-labelledby="resolutionTitle">
+      <form id="resolutionForm">
+        <div class="dialog-header">
+          <h2 id="resolutionTitle">Resolution</h2>
+          <button
+            id="closeResolution"
+            class="icon-button"
+            type="button"
+            aria-label="Close"
+          >
+            ×
+          </button>
         </div>
-      </div>
-    </div>
-    <script
-      src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/js/bootstrap.bundle.min.js"
-      integrity="sha384-MrcW6ZMFYlzcLA8Nl+NtUVF0sA7MsXsP1UyJoMp4YLEuNSfAP+JcXn/tWtIaxVXM"
-      crossorigin="anonymous"
-    ></script>
-    <script type="module" src="./index.js" defer></script>
+
+        <label class="checkbox-row">
+          <input type="checkbox" checked id="checkbox-img-ratio" />
+          Keep the image ratio
+        </label>
+
+        <label>
+          Width
+          <input type="number" min="1" step="1" id="width-size" required />
+        </label>
+
+        <label>
+          Height
+          <input type="number" min="1" step="1" id="height-size" required />
+        </label>
+
+        <p id="resizeError" class="form-error" role="alert"></p>
+
+        <div class="dialog-actions">
+          <button type="button" id="cancelResolution">Cancel</button>
+          <button type="submit" class="primary-button" id="saveResolution">
+            Save changes
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <script type="module" src="./index.js"></script>
   </body>
 </html>

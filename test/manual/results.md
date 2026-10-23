@@ -52,3 +52,37 @@ Browser automation could not create a native captured-pointer stream, so outside
 The user accepted the Chromium runtime results plus a standards-based review in place of installing/configuring additional browsers. The canvas path uses Pointer Events and pointer capture, `requestAnimationFrame`, Canvas 2D, `createImageBitmap`, `ImageBitmap.close()`, CSS `touch-action`, and CSS `inset`; these APIs are available in current Chrome, Firefox, and Safari. `getCoalescedEvents()` is optional in the implementation and falls back to the original pointer event when unavailable.
 
 The regression smoke test also confirmed the existing resize path transitions 4000 × 3000 → 800 × 600 with one history entry, undo/redo restore both dimensions, the filter menu remains clickable above the overlay, and filter/save paths still work without captured application errors.
+
+## Image-processing baseline
+
+Fixture: generated 10,743,602-byte 4000 × 3000 PNG in automated Chromium.
+
+| Operation | Baseline |
+| --- | --- |
+| Local load | 114.0 ms total; 34.8 ms in `FileReader.readAsDataURL()` |
+| Resize to 800 × 600 | 343.1 ms; 211.5 ms in `toDataURL()` |
+| Grayscale at 800 × 600 | 38.1 ms |
+| Sepia at 800 × 600 | 55.7 ms |
+| Invert at 800 × 600 | 39.8 ms |
+| Threshold at 800 × 600 | 39.8 ms |
+| Export | 183.8 ms; 180.4 ms in `toDataURL()` |
+
+Baseline export assigned a 14,324,835-character base64 URL to the download.
+
+## Image-processing post-refactor
+
+Fresh-server Chromium smoke test:
+
+| Operation | Post-refactor |
+| --- | --- |
+| Local load | 105.5 ms at 4000 × 3000; no `FileReader` or data URL |
+| Resize to 800 × 600 | 1.6 ms; one history state; undo restored 4000 × 3000 in 2.5 ms |
+| Grayscale at 4000 × 3000 | 3.6 ms total using the canvas-filter path |
+| Threshold at 4000 × 3000 | 339.2 ms using the deterministic pixel fallback |
+| Export | 104.7 ms through `toBlob()`; 303,128-byte PNG Blob |
+
+Post-refactor export used one temporary object URL, started `processedImage.png`, revoked the URL, and made no `toDataURL()` call. No runtime errors were captured. Unit tests cover invalid local files, object-URL decode fallback, allowed/blocked external decode behavior, Blob URL cleanup, filter path selection, deterministic channel output, and alpha preservation.
+
+The final Vite 8 smoke test also verified all filters at 800 × 600 with one history entry and successful undo: grayscale 1.6 ms, sepia 0.1 ms, invert 0.5 ms, and threshold through the pixel fallback. Same-origin URL loading reset history, while a blocked URL displayed the local-file recovery message and preserved the current image. Native Draw and Filter menus, the resize dialog, and all processing controls remained available without captured runtime errors.
+
+For the image-processing matrix, the user requested the faster verification path already accepted for the canvas phase: Chromium runtime coverage plus a standards-based compatibility review instead of installing/configuring additional browsers. `createImageBitmap` has an object-URL/`Image.decode()` fallback, Canvas 2D filters have deterministic pixel fallbacks, and the remaining APIs (`toBlob`, object URLs, `<details>`, and `<dialog>`) are available in current Chrome, Firefox, and Safari.
