@@ -1,164 +1,372 @@
-/**
- * Canvas API wrapper.
- *
- * Encapsulates the canvas element and the drawing API.
- * Exposes undo and redo logic using the history object.
- */
+import {
+  createFrameScheduler,
+  mapPointToCanvas,
+  normalizeRect,
+} from "./image-utils.js";
+import { HistoryStore } from "./history-store.js";
+
+const HISTORY_LIMIT = 20;
+
 function makeCanvas() {
   const canvasEl = document.getElementById("imageProcessed");
+  const overlayEl = document.getElementById("imageOverlay");
+  const canvasStack = document.getElementById("canvasStack");
   const context = canvasEl.getContext("2d");
-  const history = {
-    past: [],
-    present: null,
-    future: [],
+  const overlayContext = overlayEl.getContext("2d");
+  const history = new HistoryStore(HISTORY_LIMIT);
 
-    add(newPresent) {
-      if (this.present === newPresent) return;
+  let hasContent = false;
+  let pendingOperations = 0;
+  let operationQueue = Promise.resolve();
+  let removePointerTool = () => {};
 
-      if (this.present) this.past.push(this.present);
-      this.present = newPresent;
-      this.future = [];
-    },
-    undo() {
-      if (this.past.length === 0) return;
+  function emitState() {
+    const detail = {
+      busy: pendingOperations > 0,
+      canUndo: history.canUndo,
+      canRedo: history.canRedo,
+      history: history.size,
+    };
 
-      const previous = this.past[this.past.length - 1];
-      const newPast = this.past.slice(0, this.past.length - 1);
-      const present = this.present;
+    for (const [id, enabled] of [
+      ["undoButton", detail.canUndo && !detail.busy],
+      ["redoButton", detail.canRedo && !detail.busy],
+    ]) {
+      const control = document.getElementById(id);
+      control?.classList.toggle("no-events", !enabled);
+      control?.setAttribute("aria-disabled", String(!enabled));
+    }
 
-      this.past = newPast;
-      this.present = previous;
-      this.future = [present, ...this.future];
-    },
-    redo() {
-      if (this.future.length === 0) return;
+    window.dispatchEvent(new CustomEvent("canvasstatechange", { detail }));
+  }
 
-      const next = this.future[0];
-      const newFuture = this.future.slice(1);
+  function reportError(error) {
+    console.error(error);
+    window.dispatchEvent(
+      new CustomEvent("canvaserror", {
+        detail: { message: error?.message || "Canvas operation failed.", error },
+      })
+    );
+  }
 
-      this.past.push(this.present);
-      this.present = next;
-      this.future = newFuture;
-    },
-  };
+  function enqueue(operation) {
+    pendingOperations += 1;
+    emitState();
+
+    const result = operationQueue.then(operation);
+    operationQueue = result
+      .catch((error) => {
+        reportError(error);
+      })
+      .finally(() => {
+        pendingOperations -= 1;
+        emitState();
+      });
+
+    return result;
+  }
+
+  function setSize({ width, height }) {
+    canvasEl.width = width;
+    canvasEl.height = height;
+    overlayEl.width = width;
+    overlayEl.height = height;
+    canvasStack.style.width = `${width}px`;
+  }
+
+  function clearOverlay() {
+    overlayContext.clearRect(0, 0, overlayEl.width, overlayEl.height);
+  }
+
+  function restoreSnapshot(snapshot) {
+    setSize({ width: snapshot.width, height: snapshot.height });
+    context.clearRect(0, 0, canvasEl.width, canvasEl.height);
+    context.drawImage(snapshot, 0, 0);
+    clearOverlay();
+  }
+
+  function captureSnapshot(reset = false) {
+    if (!hasContent) return Promise.resolve(false);
+
+    let snapshot;
+    try {
+      snapshot = createImageBitmap(canvasEl);
+    } catch (error) {
+      reportError(error);
+      return Promise.reject(error);
+    }
+
+    return enqueue(async () => {
+      const bitmap = await snapshot;
+      if (reset) history.reset(bitmap);
+      else history.add(bitmap);
+      emitState();
+      return true;
+    });
+  }
+
+  async function finishPointerSession(callbacks, session, cancelled) {
+    if (cancelled) {
+      callbacks.oncancel?.({ start: session.start, point: session.latest });
+      clearOverlay();
+      return;
+    }
+
+    const shouldCommit = await callbacks.onmouseup?.({
+      start: session.start,
+      point: session.latest,
+      context: overlayContext,
+    });
+
+    if (callbacks.commitOverlay !== false && shouldCommit !== false) {
+      context.drawImage(overlayEl, 0, 0);
+      clearOverlay();
+      await captureSnapshot();
+    } else {
+      clearOverlay();
+    }
+  }
 
   return {
     isEmpty() {
-      return history.present === null;
+      return !hasContent;
     },
-    /**
-     * Returns the position of the canvas element relative to the document
-     */
+
+    isBusy() {
+      return pendingOperations > 0;
+    },
+
+    getHistoryState() {
+      return {
+        ...history.size,
+        canUndo: history.canUndo,
+        canRedo: history.canRedo,
+        busy: pendingOperations > 0,
+      };
+    },
+
     getPosition() {
       const box = canvasEl.getBoundingClientRect();
       return {
-        top: box.top + window.pageYOffset - document.documentElement.clientTop,
-        left:
-          box.left + window.pageXOffset - document.documentElement.clientLeft,
+        top: box.top + window.scrollY,
+        left: box.left + window.scrollX,
       };
     },
+
     getSize() {
       return {
         width: canvasEl.width,
         height: canvasEl.height,
       };
     },
+
     resize(size) {
-      canvasEl.width = size.width;
-      canvasEl.height = size.height;
+      setSize(size);
     },
-    /**
-     * Performs an action on the canvas element while preserving the history.
-     * @param {callback} drawOperation
-     */
+
     draw(drawOperation) {
       drawOperation(context);
-      this.commitDraw();
+      hasContent = true;
+      return captureSnapshot();
     },
-    /**
-     * Draw something on the canvas without affecting the history.
-     * This is useful for intermediate drawing steps.
-     * @param {callback} drawOperation
-     */
+
     drawWithoutCommit(drawOperation) {
       drawOperation(context);
     },
-    /**
-     * Commits a copy of the current ImageData to the history object.
-     */
+
     commitDraw() {
-      const size = this.getSize();
-      const data = context.getImageData(0, 0, size.width, size.height);
-      history.add(
-        new ImageData(new Uint8ClampedArray(data.data), data.width, data.height)
+      hasContent = true;
+      return captureSnapshot();
+    },
+
+    loadImage(image) {
+      const width = image.naturalWidth || image.width;
+      const height = image.naturalHeight || image.height;
+      setSize({ width, height });
+      context.clearRect(0, 0, width, height);
+      context.drawImage(image, 0, 0, width, height);
+      hasContent = true;
+      canvasStack.hidden = false;
+      return captureSnapshot(true);
+    },
+
+    drawImage(image, size = {}) {
+      const width = size.width || image.width || image.naturalWidth;
+      const height = size.height || image.height || image.naturalHeight;
+      setSize({ width, height });
+      context.clearRect(0, 0, width, height);
+      context.drawImage(image, 0, 0, width, height);
+      hasContent = true;
+      canvasStack.hidden = false;
+      return captureSnapshot(history.present === null);
+    },
+
+    crop(start, end) {
+      const bounds = normalizeRect(start, end);
+      const width = Math.round(bounds.width);
+      const height = Math.round(bounds.height);
+      if (!width || !height) return Promise.resolve(false);
+
+      const scratch = document.createElement("canvas");
+      scratch.width = width;
+      scratch.height = height;
+      scratch.getContext("2d").drawImage(
+        canvasEl,
+        bounds.x,
+        bounds.y,
+        bounds.width,
+        bounds.height,
+        0,
+        0,
+        width,
+        height
       );
+
+      setSize({ width, height });
+      context.drawImage(scratch, 0, 0);
+      return captureSnapshot();
     },
-    /**
-     * Abstracts the process of drawing an image on the canvas.
-     * @param {HTMLImageElement} image
-     */
-    drawImage(image) {
-      const { width, height } = image;
-      this.resize({ width, height });
-      this.draw((context) => {
-        context.drawImage(image, 0, 0, width, height);
-      });
+
+    performWhilePointerDown(action) {
+      removePointerTool();
+      clearOverlay();
+
+      const callbacks = action();
+      const scheduler = createFrameScheduler(
+        window.requestAnimationFrame.bind(window),
+        window.cancelAnimationFrame.bind(window)
+      );
+      let session = null;
+      let finishing = false;
+
+      const pointFromEvent = (event) =>
+        mapPointToCanvas(
+          event.clientX,
+          event.clientY,
+          overlayEl.getBoundingClientRect(),
+          overlayEl.width,
+          overlayEl.height
+        );
+
+      const renderFrame = () => {
+        if (!session || session.points.length === 0) return;
+        const points = session.points.splice(0);
+        session.latest = points[points.length - 1];
+        if (callbacks.clearEachFrame !== false) clearOverlay();
+        callbacks.onmousemove?.({
+          start: session.start,
+          point: session.latest,
+          points,
+          context: overlayContext,
+        });
+      };
+
+      const cancelSession = async () => {
+        if (!session || finishing) return;
+        finishing = true;
+        scheduler.cancel();
+        const current = session;
+        session = null;
+        await finishPointerSession(callbacks, current, true);
+        finishing = false;
+      };
+
+      overlayEl.onpointerdown = (event) => {
+        if (
+          session ||
+          finishing ||
+          pendingOperations > 0 ||
+          !hasContent ||
+          event.isPrimary === false ||
+          (event.pointerType === "mouse" && event.button !== 0)
+        ) {
+          return;
+        }
+
+        event.preventDefault();
+        clearOverlay();
+        const point = pointFromEvent(event);
+        session = {
+          pointerId: event.pointerId,
+          start: point,
+          latest: point,
+          points: [],
+        };
+        overlayEl.setPointerCapture?.(event.pointerId);
+        callbacks.onmousedown?.({ point, context: overlayContext });
+      };
+
+      overlayEl.onpointermove = (event) => {
+        if (!session || event.pointerId !== session.pointerId) return;
+        event.preventDefault();
+        const events = event.getCoalescedEvents?.() || [event];
+        const points = events.length ? events.map(pointFromEvent) : [pointFromEvent(event)];
+        session.points.push(...points);
+        scheduler.schedule(renderFrame);
+      };
+
+      overlayEl.onpointerup = async (event) => {
+        if (!session || event.pointerId !== session.pointerId || finishing) return;
+        event.preventDefault();
+        finishing = true;
+        session.points.push(pointFromEvent(event));
+        scheduler.flush();
+        const current = session;
+        session = null;
+        overlayEl.releasePointerCapture?.(event.pointerId);
+        try {
+          await finishPointerSession(callbacks, current, false);
+        } finally {
+          finishing = false;
+        }
+      };
+
+      overlayEl.onpointercancel = cancelSession;
+      overlayEl.onlostpointercapture = cancelSession;
+
+      removePointerTool = () => {
+        scheduler.cancel();
+        clearOverlay();
+        session = null;
+        overlayEl.onpointerdown = null;
+        overlayEl.onpointermove = null;
+        overlayEl.onpointerup = null;
+        overlayEl.onpointercancel = null;
+        overlayEl.onlostpointercapture = null;
+      };
     },
-    /**
-     * Performs mouse events on the canvas while the mouse is down.
-     * Commits changes to the history once the mouse is released.
-     * @param {callback} action return mouse events to be performed on the canvas
-     */
-    performWhileMouseDown(action) {
-      let started = false;
-      const { onmousedown, onmousemove, onmouseup } = action();
-      canvasEl.onmousedown = (e) => {
-        started = true;
-        onmousedown?.(e);
-      };
-      canvasEl.onmousemove = (e) => {
-        if (!started) return;
-        onmousemove?.(e);
-      };
-      canvasEl.onmouseup = (e) => {
-        started = false;
-        onmouseup?.(e);
-        this.commitDraw();
-      };
-    },
-    /**
-     * Modifies the canvas pixels using the given transformation.
-     * @param {callback} pixelTransformation receives the pixel data to mutate in place
-     */
+
     applyPixelTransformation(pixelTransformation) {
-      this.draw((context) => {
+      return this.draw((drawingContext) => {
         const { width, height } = this.getSize();
-        const imgData = context.getImageData(0, 0, width, height);
+        const imgData = drawingContext.getImageData(0, 0, width, height);
         pixelTransformation(imgData.data);
-        context.putImageData(imgData, 0, 0);
+        drawingContext.putImageData(imgData, 0, 0);
       });
     },
-    /**
-     * Undo the last action on the canvas.
-     */
+
     undo() {
-      history.undo();
-      const { width, height } = history.present;
-      this.resize({ width, height });
-      context.putImageData(history.present, 0, 0);
+      if (pendingOperations > 0 || !history.canUndo) return Promise.resolve(false);
+      return enqueue(() => {
+        const snapshot = history.undo();
+        if (!snapshot) return false;
+        restoreSnapshot(snapshot);
+        emitState();
+        return true;
+      });
     },
-    /**
-     * Redo the last action on the canvas.
-     */
+
     redo() {
-      history.redo();
-      const { width, height } = history.present;
-      this.resize({ width, height });
-      context.putImageData(history.present, 0, 0);
+      if (pendingOperations > 0 || !history.canRedo) return Promise.resolve(false);
+      return enqueue(() => {
+        const snapshot = history.redo();
+        if (!snapshot) return false;
+        restoreSnapshot(snapshot);
+        emitState();
+        return true;
+      });
     },
-    /**
-     * Return a data URI containing a representation of the current canvas as a base64 encoded string.
-     */
+
     getOctetStream() {
       return canvasEl
         .toDataURL("image/png")

@@ -2,131 +2,63 @@
 
 ## Context
 
-See `proposal.md` for motivation and the two capability specs for required behavior. Today `canvas.js` owns one visible canvas, synchronous `ImageData` history, and mouse-only interaction hooks. `index.js` snapshots that canvas through `toDataURL()` for shape and crop previews, loads files through `FileReader`, performs filters on the main thread, and installs resize listeners every time the Bootstrap modal opens. The page has no responsive coordinate mapping, and the project has no automated tests.
-
-The refactor must stay client-only and framework-free at runtime, support current Chrome, Firefox, and Safari, and remain usable after each implementation phase. A 4000 by 3000 image is the representative large-image fixture for verification.
+See `proposal.md` and `specs/canvas-editing/spec.md`. Today one visible canvas stores committed pixels, previews restore a PNG data URL on every mouse move, input is mouse-only, coordinates assume an unscaled canvas, and history stores unlimited duplicated `ImageData`. This change deliberately leaves loading, resize, filters, export, Bootstrap, and delivery tooling to `modernize-image-processing`.
 
 ## Goals / Non-Goals
 
 **Goals:**
 
-- Keep committed image pixels separate from transient interaction visuals.
-- Centralize pointer lifecycle, coordinate conversion, and commit semantics.
-- Put an explicit upper bound on retained history resources.
-- Remove synchronous base64 conversion from interaction, load, resize, and export paths.
-- Isolate pixel readback so normal drawing can remain hardware accelerated.
-- Land the work in independently verifiable phases with simple rollback boundaries.
+- Separate committed pixels from transient previews.
+- Centralize pointer lifecycle, coordinate conversion, and commit behavior.
+- Render no more than one preview per animation frame.
+- Bound history to the current image plus 20 undo states and release discarded resources.
+- Preserve current editing behavior while supporting current Chrome, Firefox, and Safari.
 
 **Non-Goals:**
 
-- Adding layers, text editing, configurable brushes, new filters, or server-side processing.
-- Guaranteeing identical filter rounding across browser rendering engines.
-- Supporting legacy browsers outside current Chrome, Firefox, and Safari.
-- Introducing a frontend framework, persistent document format, or cross-session history.
-- Building a general-purpose canvas abstraction beyond this editor's tools.
+- Changing image decode, resize, filter, or export implementations.
+- Replacing Bootstrap or upgrading build and delivery tooling.
+- Adding layers, text, brushes, new filters, or server processing.
 
 ## Decisions
 
-### 1. Use committed and overlay canvases
+### 1. Stack a transparent overlay over the committed canvas
 
-`canvas.js` will own a visible canvas stack: a base canvas containing the committed image and a transparent overlay canvas containing the current pen stroke, shape preview, or crop bounds. Both canvases share intrinsic dimensions and identical responsive CSS dimensions. A surrounding positioned container replaces direct layout of the base canvas.
+`canvas.js` owns the existing base canvas and a transparent overlay canvas inside a responsive positioned container. Both surfaces share intrinsic dimensions and CSS geometry. Pen strokes, shape previews, and crop bounds render only on the overlay; a valid drawing composites once on pointer release. Crop uses normalized bounds and a scratch canvas before replacing the base.
 
-Pointer movement clears and redraws only the overlay. Pointer release composites a valid drawing overlay onto the base once; crop release uses normalized bounds and a scratch canvas to replace the base. Pointer cancellation clears the overlay without committing.
+This removes interaction-time PNG encoding and base restoration. Restoring `ImageData` per move was rejected because it still copies a full frame; retained vector replay was rejected because crop and future raster operations require pixel state.
 
-This avoids PNG encoding and full base-canvas restoration during previews. It also gives all drawing tools one transaction boundary for history.
+### 2. Use one captured pointer session with frame scheduling
 
-Alternatives considered:
+A pointer-session API accepts one primary pointer, calls `setPointerCapture`, converts `clientX`/`clientY` through the overlay's bounding rectangle, and retains the latest point. One `requestAnimationFrame` callback renders the latest shape position or accumulated coalesced pen points. Pointer up finalizes; pointer cancel or lost capture clears without commit.
 
-- `toDataURL()` snapshots retain the current architecture but synchronously encode and allocate large strings.
-- Restoring `ImageData` on every move avoids PNG encoding but still performs large CPU-to-canvas copies.
-- A single canvas plus retained vector commands reduces surfaces but requires replaying mixed raster and vector operations and complicates filters and crop.
+Pointer Events provide one lifecycle for mouse, touch, and stylus. Time-based throttling and separate input handlers were rejected because they produce uneven rendering and duplicated state.
 
-### 2. Use one captured pointer session and one animation-frame scheduler
+### 3. Store closeable bitmap history through a serialized queue
 
-The canvas wrapper will expose a pointer-session API used by every drawing and crop tool. On `pointerdown`, it accepts one active primary pointer and calls `setPointerCapture`. It stores the latest mapped coordinate, batches any coalesced pen points, and schedules at most one render callback with `requestAnimationFrame`. `pointerup`, `pointercancel`, and lost capture complete or cancel the session and clear pending animation work.
+History keeps the current `ImageBitmap` and at most 20 past states. Commits use `createImageBitmap(baseCanvas)` and a promise queue so snapshots cannot reorder. Undo and redo draw the selected bitmap after resizing both canvas surfaces. History actions are ignored while a commit or restore is pending.
 
-A single coordinate helper maps `clientX` and `clientY` from `getBoundingClientRect()` into intrinsic coordinates using separate X and Y scale factors. Pointer Events replace the current mixture of page and offset coordinates. The overlay receives `touch-action: none` while editing so touch gestures do not steal active strokes.
+Evicted past states, discarded redo states, replacement-image history, and teardown call `close()`. Capped `ImageData` was rejected because every commit forces readback and stores frames in JavaScript heap; encoded Blobs were rejected because undo would require repeated decode.
 
-Alternatives considered:
+### 4. Keep compatibility at the canvas boundary
 
-- Throttling by elapsed milliseconds is not synchronized with display paint and can produce uneven latency.
-- Separate mouse and touch handlers duplicate lifecycle and coordinate logic.
-- Window-level mouseup handlers fix only release handling and do not add stylus support.
+The existing synchronous `drawImage`, filter, resize, and download callers remain callable. `drawImage` resets history after a replacement image; raster operations commit through the new history queue. The existing data-URL method remains temporarily for resize/export only, but drawing and crop code no longer call it.
 
-### 3. Store at most 21 snapshots as closeable image resources
-
-History will represent the current state plus up to 20 prior states. Commits capture the base canvas with `createImageBitmap`, serialized through a short promise queue so rapid actions cannot reorder history. Undo and redo draw the selected bitmap into a correctly resized base canvas. The editor temporarily disables history actions while a capture or restore is pending.
-
-Evicted past entries, discarded redo entries, replacement-image history, and teardown all call `ImageBitmap.close()`. If bitmap creation fails, the edit remains visible but the operation reports a recoverable history error rather than corrupting the current image. No additional `Uint8ClampedArray` copy is made.
-
-Alternatives considered:
-
-- Capped `ImageData` is simpler but forces GPU readback for every commit and consumes four bytes per pixel in JavaScript heap.
-- Command-only history is efficient for vector tools but cannot cheaply reverse crop, resize, filters, and replacement images.
-- PNG Blobs reduce retained memory but add encode/decode latency to every commit, undo, and redo.
-
-### 4. Use dedicated scratch canvases for raster transforms
-
-Resize, crop, accelerated filters, and fallback pixel filters will use temporary in-memory canvases. Operations render a complete result to scratch storage, then atomically replace and commit the base image. A scratch context used for `getImageData()` will request `willReadFrequently`; the visible base and overlay contexts will not, preserving their normal rendering path.
-
-For grayscale, sepia, and invert, the processing layer first feature-detects `CanvasRenderingContext2D.filter` and draws through that filter. Threshold always uses pixel data. Fallback loops index channels directly, preserve alpha, and avoid per-pixel array allocation. Each filter produces one history commit.
-
-Alternatives considered:
-
-- Applying reads and transforms directly to the base risks a partially transformed image on failure and may cause the browser to switch the visible canvas to software rendering.
-- A Web Worker with `OffscreenCanvas` can further reduce main-thread work but adds messaging and Safari-specific complexity; it can be considered later if measured native and optimized paths remain inadequate.
-
-### 5. Decode and export without base64
-
-Local files will use `createImageBitmap(file)` for asynchronous decode. An object-URL-backed `Image` with `decode()` is the fallback, and its URL is always revoked. Loading a replacement image resets and closes prior history only after decode succeeds.
-
-Resize draws the current base into a correctly sized scratch canvas with image smoothing enabled and high quality, avoiding self-resize pixel loss. Export uses `canvas.toBlob()` to create `image/png`, assigns a temporary object URL to the download, triggers it, and revokes the URL after the browser has consumed the click. Failed decode, resize, and export paths leave the committed image unchanged and surface a concise error.
-
-External URL drops are retained only when the browser can decode them without violating canvas origin rules; otherwise the editor reports that the image must be downloaded and dropped as a local file.
-
-Alternatives considered:
-
-- `FileReader.readAsDataURL()` and `toDataURL()` allocate base64 strings roughly one-third larger than their binary content and synchronously encode on export.
-- Fetching arbitrary remote URLs cannot bypass CORS and would create misleading support expectations in a client-only app.
-
-### 6. Replace Bootstrap after canvas behavior stabilizes
-
-The resize modal becomes a native `<dialog>` and drawing/filter menus use semantic `<details>` controls. Toolbar triggers become actual buttons, invalid self-closing HTML is corrected, and the resize listeners are registered once during startup. CSS keeps the canvas stack responsive and supplies keyboard focus and disabled states.
-
-Native controls remove the Bootstrap CSS/JavaScript and CDN round trips without introducing another runtime dependency. `<details>` is preferred over the newer Popover API because its interaction model and compatibility are sufficient for these small menus.
-
-Alternatives considered:
-
-- Keeping Bootstrap and importing only modal/dropdown modules reduces bundle size but retains a runtime dependency for two simple controls.
-- Custom ARIA menu and modal implementations require more focus-management code than the editor needs.
-
-### 7. Upgrade tooling last and add focused verification seams
-
-Vite and GitHub Actions will be upgraded only after functional phases pass. Pure logic—coordinate conversion, crop normalization, dimension validation, history bounds, and pixel fallbacks—will move into small modules testable with Node's built-in test runner, avoiding a test framework dependency. Browser verification covers canvas APIs and uses the 4000 by 3000 fixture in current Chrome, Firefox, and Safari. CI will run tests and build on pull requests before deployment.
-
-Alternatives considered:
-
-- A full browser automation dependency would improve repeatability but substantially expands this small project's development footprint. It can be added later if manual browser verification becomes unreliable.
-- Upgrading Vite first mixes toolchain migration failures with behavior changes and makes regressions harder to isolate.
+This boundary lets the canvas half ship independently while the follow-up replaces image-processing paths.
 
 ## Risks / Trade-offs
 
-- [A 21-snapshot bitmap history can still consume significant GPU/process memory for very large images] → Close entries immediately when evicted, reset history on replacement images, verify memory with the representative fixture, and reduce the cap only through a follow-up spec change.
-- [Asynchronous snapshot capture could reorder rapid edits or history commands] → Serialize commits and disable undo/redo while history is pending.
-- [Canvas filter output can vary slightly across browsers] → Test effect semantics and alpha preservation rather than byte-identical color rounding; retain deterministic pixel fallbacks.
-- [A second full-size canvas consumes additional backing-store memory] → Keep the overlay transparent and clear it after every transaction; this fixed allocation replaces repeated full-frame copies and encoded strings.
-- [Object URLs can leak when error or repeated-export paths are missed] → Centralize creation/revocation and cover success, replacement, cancellation, and failure cases.
-- [Native dialog and details styling differs across browsers] → Keep behavior semantic, use focused CSS, and verify keyboard and pointer operation in the browser matrix.
-- [External URL drops may stop working for sources that previously displayed but later tainted the canvas] → Detect failure and explain the local-file workaround instead of allowing a broken editing session.
+- [The overlay adds a second full-size backing surface] → Clear it after every transaction and verify memory against the eliminated transient PNG/frame copies.
+- [Large bitmap history can still consume substantial process memory] → Cap past states at 20 and close every evicted, discarded, or reset resource immediately.
+- [Asynchronous snapshots can race with rapid edits] → Serialize commits and block history actions while work is pending.
+- [Pointer capture behavior differs at browser edges] → Handle pointer up, cancel, and lost capture idempotently and verify the browser matrix.
 
 ## Migration Plan
 
-1. Add pure helper tests and a repeatable 4000 by 3000 fixture-generation procedure; record the current behavior and confirm the existing build.
-2. Introduce the canvas stack, coordinate mapping, pointer sessions, frame scheduler, and tool migration. Keep the existing history and image-processing paths temporarily behind the new commit boundary.
-3. Replace history with capped bitmap snapshots and resource cleanup; verify load, commit, undo, redo, branch-after-undo, and history reset.
-4. Replace load, crop, resize, and export base64 paths with decode, scratch-canvas, Blob, and object-URL paths.
-5. Add accelerated filter paths and optimized fallbacks, verifying all filters and alpha preservation.
-6. Replace Bootstrap and invalid toolbar markup with native controls, responsive styles, and one-time listeners.
-7. Upgrade Vite and CI, then run tests, production build, and the complete browser/large-image matrix.
+1. Preserve the completed test setup and record the canvas baseline with the 4000 by 3000 fixture.
+2. Add the canvas stack, coordinate mapping, pointer session, and frame scheduler.
+3. Migrate pen, shape, and crop tools to overlay transactions.
+4. Replace history with bounded bitmap snapshots and resource cleanup.
+5. Run unit tests, production build, and canvas scenarios in current Chrome, Firefox, and Safari.
 
-Each phase remains a reviewable checkpoint. If a phase regresses behavior, revert that phase without rolling back earlier verified phases; no persistent user data or migration is involved.
+Each step remains a reviewable checkpoint. No persistent user data migration is required.

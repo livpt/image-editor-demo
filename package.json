@@ -1,10 +1,12 @@
 {
   "name": "simple-web-image-editor",
   "version": "1.0.0",
+  "type": "module",
   "description": "A simple image editor web app built with vanilla Javascript and HTML5 Canvas.",
   "scripts": {
     "dev": "vite",
-    "build": "vite build --base=./"
+    "build": "vite build --base=./",
+    "test": "node --test"
   },
   "repository": {
     "type": "git",
