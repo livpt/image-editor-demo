@@ -4,6 +4,8 @@ import {
   normalizeRect,
 } from "./image-utils.js";
 import { HistoryStore } from "./history-store.js";
+import { canvasToBlob } from "./image-io.js";
+import { enableCanvasFilter } from "./processing-utils.js";
 
 const HISTORY_LIMIT = 20;
 
@@ -35,6 +37,7 @@ function makeCanvas() {
       const control = document.getElementById(id);
       control?.classList.toggle("no-events", !enabled);
       control?.setAttribute("aria-disabled", String(!enabled));
+      if (control instanceof HTMLButtonElement) control.disabled = !enabled;
     }
 
     window.dispatchEvent(new CustomEvent("canvasstatechange", { detail }));
@@ -76,6 +79,27 @@ function makeCanvas() {
 
   function clearOverlay() {
     overlayContext.clearRect(0, 0, overlayEl.width, overlayEl.height);
+  }
+
+  function createScratchCanvas(width, height, readFrequently = false) {
+    const scratch = document.createElement("canvas");
+    scratch.width = width;
+    scratch.height = height;
+    const scratchContext = scratch.getContext(
+      "2d",
+      readFrequently ? { willReadFrequently: true } : undefined
+    );
+    if (!scratchContext) throw new Error("Canvas processing is unavailable.");
+    return { scratch, scratchContext };
+  }
+
+  async function replaceWithScratch(scratch, resetHistory = false) {
+    setSize({ width: scratch.width, height: scratch.height });
+    context.clearRect(0, 0, scratch.width, scratch.height);
+    context.drawImage(scratch, 0, 0);
+    hasContent = true;
+    canvasStack.hidden = false;
+    await captureSnapshot(resetHistory);
   }
 
   function restoreSnapshot(snapshot) {
@@ -179,15 +203,22 @@ function makeCanvas() {
       return captureSnapshot();
     },
 
-    loadImage(image) {
+    async loadImage(image) {
       const width = image.naturalWidth || image.width;
       const height = image.naturalHeight || image.height;
-      setSize({ width, height });
-      context.clearRect(0, 0, width, height);
-      context.drawImage(image, 0, 0, width, height);
-      hasContent = true;
-      canvasStack.hidden = false;
-      return captureSnapshot(true);
+      if (!width || !height) throw new Error("The image has invalid dimensions.");
+
+      const { scratch, scratchContext } = createScratchCanvas(width, height, true);
+      scratchContext.drawImage(image, 0, 0, width, height);
+      try {
+        scratchContext.getImageData(0, 0, 1, 1);
+      } catch {
+        throw new Error(
+          "This image cannot be edited because its source blocks canvas access."
+        );
+      }
+
+      await replaceWithScratch(scratch, true);
     },
 
     drawImage(image, size = {}) {
@@ -225,6 +256,65 @@ function makeCanvas() {
       setSize({ width, height });
       context.drawImage(scratch, 0, 0);
       return captureSnapshot();
+    },
+
+    async resizeImage(size) {
+      const width = Math.round(Number(size.width));
+      const height = Math.round(Number(size.height));
+      if (!hasContent || width <= 0 || height <= 0) {
+        throw new Error("Enter positive width and height values.");
+      }
+
+      const { scratch, scratchContext } = createScratchCanvas(width, height);
+      scratchContext.imageSmoothingEnabled = true;
+      scratchContext.imageSmoothingQuality = "high";
+      scratchContext.drawImage(canvasEl, 0, 0, width, height);
+      await replaceWithScratch(scratch);
+    },
+
+    async applyFilter(filter) {
+      if (!hasContent) return { accelerated: false, applied: false };
+
+      const { width, height } = this.getSize();
+      let scratch;
+      let accelerated = false;
+
+      if (filter.canvasFilter) {
+        const acceleratedSurface = createScratchCanvas(width, height);
+        if (
+          enableCanvasFilter(
+            acceleratedSurface.scratchContext,
+            filter.canvasFilter
+          )
+        ) {
+          acceleratedSurface.scratchContext.drawImage(canvasEl, 0, 0);
+          acceleratedSurface.scratchContext.filter = "none";
+          scratch = acceleratedSurface.scratch;
+          accelerated = true;
+        }
+      }
+
+      if (!scratch) {
+        const fallbackSurface = createScratchCanvas(width, height, true);
+        fallbackSurface.scratchContext.drawImage(canvasEl, 0, 0);
+        const imageData = fallbackSurface.scratchContext.getImageData(
+          0,
+          0,
+          width,
+          height
+        );
+        filter.transform(imageData.data);
+        fallbackSurface.scratchContext.putImageData(imageData, 0, 0);
+        scratch = fallbackSurface.scratch;
+      }
+
+      await replaceWithScratch(scratch);
+      return { accelerated, applied: true };
+    },
+
+    toBlob() {
+      if (!hasContent) return Promise.resolve(null);
+      return canvasToBlob(canvasEl);
     },
 
     performWhilePointerDown(action) {
@@ -367,11 +457,6 @@ function makeCanvas() {
       });
     },
 
-    getOctetStream() {
-      return canvasEl
-        .toDataURL("image/png")
-        .replace("image/png", "image/octet-stream");
-    },
   };
 }
 

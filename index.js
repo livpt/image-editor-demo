@@ -1,38 +1,94 @@
 import { canvas } from "./canvas.js";
+import {
+  decodeExternalImage,
+  decodeLocalImage,
+  downloadBlob,
+} from "./image-io.js";
+import {
+  scaleDimension,
+  validateDimensions,
+} from "./image-utils.js";
+import { filters } from "./processing-utils.js";
 
-// Load image drag and drop
-document.getElementById("dragAndDropZone").addEventListener("dragover", (e) => {
-  e.preventDefault();
+const controls = document.getElementById("controls");
+const dragAndDropZone = document.getElementById("dragAndDropZone");
+const dragHelper = document.querySelector(".drag-helper");
+const fileInput = document.getElementById("fileInput");
+const status = document.getElementById("appStatus");
+
+function setStatus(message = "", error = false) {
+  status.textContent = message;
+  status.dataset.error = String(error);
+}
+
+function closeContainingMenu(element) {
+  element.closest("details")?.removeAttribute("open");
+}
+
+async function installDecodedImage(decoded, label) {
+  try {
+    await canvas.loadImage(decoded.source);
+    dragHelper.classList.add("invisible");
+    controls.disabled = false;
+    setStatus(`${label} is ready to edit.`);
+  } finally {
+    decoded.dispose();
+  }
+}
+
+async function loadLocalFile(file) {
+  if (!file) return;
+  setStatus(`Loading ${file.name || "image"}…`);
+  try {
+    const decoded = await decodeLocalImage(file);
+    await installDecodedImage(decoded, file.name || "Image");
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+}
+
+async function loadExternalUrl(url) {
+  if (!url) return;
+  setStatus("Loading image URL…");
+  try {
+    const decoded = await decodeExternalImage(url);
+    await installDecodedImage(decoded, "Image");
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+}
+
+dragAndDropZone.addEventListener("dragover", (event) => {
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "copy";
 });
 
-document.getElementById("dragAndDropZone").addEventListener("drop", (e) => {
-  e.preventDefault();
-
-  function loadImage(src) {
-    const image = new Image();
-    image.src = src;
-    image.onload = () => {
-      document.querySelector(".drag-helper").classList.add("invisible");
-      document.getElementById("controls").classList.remove("no-events");
-      canvas.loadImage(image);
-    };
-  }
-
-  const file = e.dataTransfer.files[0];
+dragAndDropZone.addEventListener("drop", (event) => {
+  event.preventDefault();
+  const file = event.dataTransfer.files[0];
   if (file) {
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = (e) => {
-      loadImage(e.target.result);
-    };
+    loadLocalFile(file);
+    return;
   }
 
-  const url = e.dataTransfer.getData("url");
-  if (url) loadImage(url);
+  const uriList = event.dataTransfer.getData("text/uri-list");
+  const url =
+    uriList
+      .split("\n")
+      .map((line) => line.trim())
+      .find((line) => line && !line.startsWith("#")) ||
+    event.dataTransfer.getData("url");
+  loadExternalUrl(url);
 });
 
-// Drawings
-document.getElementById("ellipseDraw").addEventListener("click", () => {
+fileInput.addEventListener("change", () => {
+  loadLocalFile(fileInput.files[0]);
+  fileInput.value = "";
+});
+
+document.getElementById("ellipseDraw").addEventListener("click", (event) => {
+  closeContainingMenu(event.currentTarget);
+  setStatus("Ellipse tool selected.");
   canvas.performWhilePointerDown(() => {
     let moved = false;
     return {
@@ -58,7 +114,9 @@ document.getElementById("ellipseDraw").addEventListener("click", () => {
   });
 });
 
-document.getElementById("rectangleDraw").addEventListener("click", () => {
+document.getElementById("rectangleDraw").addEventListener("click", (event) => {
+  closeContainingMenu(event.currentTarget);
+  setStatus("Rectangle tool selected.");
   canvas.performWhilePointerDown(() => {
     let moved = false;
     return {
@@ -73,7 +131,9 @@ document.getElementById("rectangleDraw").addEventListener("click", () => {
   });
 });
 
-document.getElementById("penDraw").addEventListener("click", () => {
+document.getElementById("penDraw").addEventListener("click", (event) => {
+  closeContainingMenu(event.currentTarget);
+  setStatus("Pen tool selected.");
   canvas.performWhilePointerDown(() => {
     let lastPoint;
     let moved = false;
@@ -98,7 +158,9 @@ document.getElementById("penDraw").addEventListener("click", () => {
   });
 });
 
-document.getElementById("lineDraw").addEventListener("click", () => {
+document.getElementById("lineDraw").addEventListener("click", (event) => {
+  closeContainingMenu(event.currentTarget);
+  setStatus("Line tool selected.");
   canvas.performWhilePointerDown(() => {
     let moved = false;
     return {
@@ -115,8 +177,8 @@ document.getElementById("lineDraw").addEventListener("click", () => {
   });
 });
 
-// Crop
 document.getElementById("cropButton").addEventListener("click", () => {
+  setStatus("Crop tool selected.");
   canvas.performWhilePointerDown(() => ({
     commitOverlay: false,
     onmousemove: ({ start, point, context }) => {
@@ -128,103 +190,113 @@ document.getElementById("cropButton").addEventListener("click", () => {
   }));
 });
 
-// Resize modal
-const modal = new bootstrap.Modal(document.getElementById("resolutionModal"));
-document
-  .getElementById("resolutionModal")
-  .addEventListener("show.bs.modal", () => {
-    const image = new Image();
-    const widthInput = document.getElementById("width-size");
-    const heightInput = document.getElementById("height-size");
-    const ratioCheckbox = document.getElementById("checkbox-img-ratio");
+const resolutionDialog = document.getElementById("resolutionDialog");
+const resolutionForm = document.getElementById("resolutionForm");
+const widthInput = document.getElementById("width-size");
+const heightInput = document.getElementById("height-size");
+const ratioCheckbox = document.getElementById("checkbox-img-ratio");
+const resizeError = document.getElementById("resizeError");
+const saveResolution = document.getElementById("saveResolution");
+let resizeRatio = 1;
+let syncingDimensions = false;
 
-    // Update values with current resolution
-    const canvasSize = canvas.getSize();
-    widthInput.value = canvasSize.width;
-    heightInput.value = canvasSize.height;
-
-    // Keep image ratio if selected
-    const ratio = canvasSize.width / canvasSize.height;
-    widthInput.addEventListener("keyup", () => {
-      if (!ratioCheckbox.checked) return;
-      heightInput.value = widthInput.value / ratio;
-    });
-    heightInput.addEventListener("keyup", () => {
-      if (!ratioCheckbox.checked) return;
-      widthInput.value = heightInput.value * ratio;
-    });
-
-    // Redraw image with new resolution values
-    document.getElementById("saveResolution").addEventListener("click", () => {
-      image.src = canvas.getOctetStream();
-      image.width = widthInput.value;
-      image.height = heightInput.value;
-      image.onload = () =>
-        canvas.drawImage(image, {
-          width: Number(widthInput.value),
-          height: Number(heightInput.value),
-        });
-      modal.hide();
-    });
-  });
-
-// Image filters
-document.getElementById("grayscale").addEventListener("click", () => {
-  canvas.applyPixelTransformation((pixels) => {
-    for (let i = 0; i < pixels.length; i += 4)
-      pixels[i] =
-        pixels[i + 1] =
-        pixels[i + 2] =
-          Math.round((pixels[i] + pixels[i + 1] + pixels[i + 2]) / 3);
-  });
-});
-
-document.getElementById("threshold").addEventListener("click", () => {
-  canvas.applyPixelTransformation((pixels) => {
-    for (let i = 0; i < pixels.length; i += 4) {
-      const [r, g, b] = getRGB(pixels, i);
-      const v = 0.2126 * r + 0.7152 * g + 0.0722 * b >= 180 ? 255 : 0;
-      pixels[i] = pixels[i + 1] = pixels[i + 2] = v;
-    }
-  });
-});
-
-document.getElementById("sephia").addEventListener("click", () => {
-  canvas.applyPixelTransformation((pixels) => {
-    for (let i = 0; i < pixels.length; i += 4) {
-      const [r, g, b] = getRGB(pixels, i);
-      pixels[i] = r * 0.393 + g * 0.769 + b * 0.189;
-      pixels[i + 1] = r * 0.349 + g * 0.686 + b * 0.168;
-      pixels[i + 2] = r * 0.272 + g * 0.534 + b * 0.131;
-    }
-  });
-});
-
-document.getElementById("invert").addEventListener("click", () => {
-  canvas.applyPixelTransformation((pixels) => {
-    for (let i = 0; i < pixels.length; i += 4) {
-      const [r, g, b] = getRGB(pixels, i);
-      pixels[i] = 255 - r;
-      pixels[i + 1] = 255 - g;
-      pixels[i + 2] = 255 - b;
-    }
-  });
-});
-
-function getRGB(pixel, position) {
-  return [pixel[position], pixel[position + 1], pixel[position + 2]];
+function openResizeDialog() {
+  const size = canvas.getSize();
+  widthInput.value = size.width;
+  heightInput.value = size.height;
+  resizeRatio = size.width / size.height;
+  resizeError.textContent = "";
+  resolutionDialog.showModal();
+  widthInput.focus();
 }
 
-// History buttons
-document
-  .getElementById("redoButton")
-  .addEventListener("click", () => canvas.redo());
-document
-  .getElementById("undoButton")
-  .addEventListener("click", () => canvas.undo());
+const resizeButton = document.getElementById("resizeButton");
+resizeButton.addEventListener("click", openResizeDialog);
+resizeButton.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  event.preventDefault();
+  openResizeDialog();
+});
 
-// Download
-document.getElementById("linkDownload").addEventListener("click", (e) => {
-  if (canvas.isEmpty()) e.preventDefault();
-  e.currentTarget.setAttribute("href", canvas.getOctetStream());
+widthInput.addEventListener("input", () => {
+  if (!ratioCheckbox.checked || syncingDimensions) return;
+  const height = scaleDimension(widthInput.value, resizeRatio, "width");
+  if (height === null) return;
+  syncingDimensions = true;
+  heightInput.value = height;
+  syncingDimensions = false;
+});
+
+heightInput.addEventListener("input", () => {
+  if (!ratioCheckbox.checked || syncingDimensions) return;
+  const width = scaleDimension(heightInput.value, resizeRatio, "height");
+  if (width === null) return;
+  syncingDimensions = true;
+  widthInput.value = width;
+  syncingDimensions = false;
+});
+
+for (const id of ["closeResolution", "cancelResolution"]) {
+  document.getElementById(id).addEventListener("click", () => {
+    resolutionDialog.close();
+  });
+}
+
+resolutionForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const dimensions = validateDimensions(widthInput.value, heightInput.value);
+  if (!dimensions) {
+    resizeError.textContent = "Enter positive width and height values.";
+    return;
+  }
+
+  saveResolution.disabled = true;
+  resizeError.textContent = "";
+  try {
+    await canvas.resizeImage(dimensions);
+    resolutionDialog.close();
+    setStatus(`Resized to ${dimensions.width} × ${dimensions.height}.`);
+  } catch (error) {
+    resizeError.textContent = error.message;
+  } finally {
+    saveResolution.disabled = false;
+  }
+});
+
+for (const [name, filter] of Object.entries(filters)) {
+  document.getElementById(name).addEventListener("click", async (event) => {
+    closeContainingMenu(event.currentTarget);
+    const label = event.currentTarget.textContent.trim();
+    setStatus(`Applying ${label.toLowerCase()}…`);
+    const started = performance.now();
+    try {
+      const result = await canvas.applyFilter(filter);
+      const duration = Math.round((performance.now() - started) * 10) / 10;
+      setStatus(
+        `${label} applied in ${duration} ms${result.accelerated ? " using the canvas filter path" : ""}.`
+      );
+    } catch (error) {
+      setStatus(error.message, true);
+    }
+  });
+}
+
+document.getElementById("redoButton").addEventListener("click", () => canvas.redo());
+document.getElementById("undoButton").addEventListener("click", () => canvas.undo());
+
+document.getElementById("downloadButton").addEventListener("click", async () => {
+  if (canvas.isEmpty()) return;
+  setStatus("Preparing PNG…");
+  try {
+    const blob = await canvas.toBlob();
+    if (!blob) return;
+    downloadBlob(blob, "processedImage.png");
+    setStatus("PNG download started.");
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+});
+
+window.addEventListener("canvaserror", (event) => {
+  setStatus(event.detail.message, true);
 });
