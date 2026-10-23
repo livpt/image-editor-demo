@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Large image fixture generator</title>
+    <style>
+      body {
+        font: 16px/1.5 system-ui, sans-serif;
+        max-width: 48rem;
+        margin: 2rem auto;
+        padding: 0 1rem;
+      }
+
+      canvas {
+        display: block;
+        width: min(100%, 40rem);
+        height: auto;
+        margin: 1rem 0;
+        border: 1px solid #777;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>4000 × 3000 PNG fixture</h1>
+    <p id="dimensions" role="status"></p>
+    <canvas id="fixture" width="4000" height="3000"></canvas>
+    <button id="download" type="button">Download large-image-4000x3000.png</button>
+
+    <script type="module">
+      const canvas = document.getElementById("fixture");
+      const context = canvas.getContext("2d");
+      const gradient = context.createLinearGradient(0, 0, canvas.width, canvas.height);
+      gradient.addColorStop(0, "#e63946");
+      gradient.addColorStop(0.5, "#f1fa8c");
+      gradient.addColorStop(1, "#457b9d");
+      context.fillStyle = gradient;
+      context.fillRect(0, 0, canvas.width, canvas.height);
+
+      context.strokeStyle = "rgba(0, 0, 0, 0.35)";
+      context.lineWidth = 8;
+      for (let x = 0; x <= canvas.width; x += 250) {
+        context.beginPath();
+        context.moveTo(x, 0);
+        context.lineTo(x, canvas.height);
+        context.stroke();
+      }
+      for (let y = 0; y <= canvas.height; y += 250) {
+        context.beginPath();
+        context.moveTo(0, y);
+        context.lineTo(canvas.width, y);
+        context.stroke();
+      }
+
+      context.fillStyle = "#111";
+      context.font = "bold 160px system-ui";
+      context.fillText("4000 × 3000", 160, 260);
+      document.getElementById("dimensions").textContent =
+        `Intrinsic dimensions: ${canvas.width} × ${canvas.height}`;
+
+      document.getElementById("download").addEventListener("click", () => {
+        canvas.toBlob((blob) => {
+          if (!blob) return;
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = "large-image-4000x3000.png";
+          link.click();
+          setTimeout(() => URL.revokeObjectURL(url), 0);
+        }, "image/png");
+      });
+    </script>
+  </body>
+</html>

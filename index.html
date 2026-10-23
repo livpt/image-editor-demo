@@ -116,7 +116,10 @@
         <img src="./assets/images/dragImg.png" class="img-fluid" />
         <h5>Drag your picture here to start editing.</h5>
       </div>
-      <canvas id="imageProcessed" />
+      <div id="canvasStack" class="canvas-stack" hidden>
+        <canvas id="imageProcessed"></canvas>
+        <canvas id="imageOverlay" aria-label="Image editing canvas"></canvas>
+      </div>
     </div>
 
     <!-- Modal resize resolution -->

@@ -1,4 +1,4 @@
-import { canvas } from "./canvas";
+import { canvas } from "./canvas.js";
 
 // Load image drag and drop
 document.getElementById("dragAndDropZone").addEventListener("dragover", (e) => {
@@ -14,7 +14,7 @@ document.getElementById("dragAndDropZone").addEventListener("drop", (e) => {
     image.onload = () => {
       document.querySelector(".drag-helper").classList.add("invisible");
       document.getElementById("controls").classList.remove("no-events");
-      canvas.drawImage(image);
+      canvas.loadImage(image);
     };
   }
 
@@ -33,167 +33,99 @@ document.getElementById("dragAndDropZone").addEventListener("drop", (e) => {
 
 // Drawings
 document.getElementById("ellipseDraw").addEventListener("click", () => {
-  canvas.performWhileMouseDown(() => {
-    const image = new Image();
-    let x0, y0, position;
-
-    const onmousedown = ({ pageX, pageY }) => {
-      position = canvas.getPosition();
-      x0 = pageX - position.left;
-      y0 = pageY - position.top;
-      image.src = canvas.getOctetStream();
-    };
-
-    const onmousemove = ({ pageX, pageY }) => {
-      canvas.drawWithoutCommit((context) => {
-        const { width, height } = canvas.getSize();
-        context.drawImage(image, 0, 0, width, height);
-        const x = pageX - position.left;
-        const y = pageY - position.top;
-
+  canvas.performWhilePointerDown(() => {
+    let moved = false;
+    return {
+      onmousemove: ({ start, point, context }) => {
+        const radiusX = Math.abs(point.x - start.x) / 2;
+        const radiusY = Math.abs(point.y - start.y) / 2;
+        moved = radiusX > 0 && radiusY > 0;
+        if (!moved) return;
         context.beginPath();
-        context.moveTo(x0, y0 + (y - y0) / 2);
-        context.bezierCurveTo(x0, y0, x, y0, x, y0 + (y - y0) / 2);
-        context.bezierCurveTo(x, y, x0, y, x0, y0 + (y - y0) / 2);
-        context.closePath();
+        context.ellipse(
+          (start.x + point.x) / 2,
+          (start.y + point.y) / 2,
+          radiusX,
+          radiusY,
+          0,
+          0,
+          Math.PI * 2
+        );
         context.stroke();
-      });
+      },
+      onmouseup: () => moved,
     };
-    return { onmousedown, onmousemove };
   });
 });
 
 document.getElementById("rectangleDraw").addEventListener("click", () => {
-  canvas.performWhileMouseDown(() => {
-    const image = new Image();
-    let startX, startY, position;
-
-    const onmousedown = ({ pageX, pageY }) => {
-      position = canvas.getPosition();
-      // save the starting x/y of the rectangle
-      startX = pageX - position.left;
-      startY = pageY - position.top;
-      image.src = canvas.getOctetStream();
+  canvas.performWhilePointerDown(() => {
+    let moved = false;
+    return {
+      onmousemove: ({ start, point, context }) => {
+        const width = point.x - start.x;
+        const height = point.y - start.y;
+        moved = width !== 0 && height !== 0;
+        if (moved) context.strokeRect(start.x, start.y, width, height);
+      },
+      onmouseup: () => moved,
     };
-
-    const onmousemove = ({ pageX, pageY }) => {
-      const mouseX = pageX - position.left;
-      const mouseY = pageY - position.top;
-      const width = mouseX - startX;
-      const height = mouseY - startY;
-
-      canvas.drawWithoutCommit((context) => {
-        // Draw the initial image on the canvas
-        // to get rid of the previous rectangle
-        const canvasSize = canvas.getSize();
-        context.drawImage(image, 0, 0, canvasSize.width, canvasSize.height);
-
-        if (!width || !height) return;
-        context.strokeRect(startX, startY, width, height);
-      });
-    };
-    return { onmousedown, onmousemove };
   });
 });
 
 document.getElementById("penDraw").addEventListener("click", () => {
-  canvas.performWhileMouseDown(() => {
-    const onmousedown = ({ offsetX, offsetY }) => {
-      canvas.drawWithoutCommit((context) => {
-        context.beginPath();
-        context.moveTo(offsetX, offsetY);
-      });
+  canvas.performWhilePointerDown(() => {
+    let lastPoint;
+    let moved = false;
+    return {
+      clearEachFrame: false,
+      onmousedown: ({ point }) => {
+        lastPoint = point;
+      },
+      onmousemove: ({ points, context }) => {
+        for (const point of points) {
+          if (point.x === lastPoint.x && point.y === lastPoint.y) continue;
+          context.beginPath();
+          context.moveTo(lastPoint.x, lastPoint.y);
+          context.lineTo(point.x, point.y);
+          context.stroke();
+          lastPoint = point;
+          moved = true;
+        }
+      },
+      onmouseup: () => moved,
     };
-
-    const onmousemove = (event) => {
-      canvas.drawWithoutCommit((context) => {
-        context.lineTo(event.offsetX, event.offsetY);
-        context.stroke();
-      });
-    };
-    return { onmousedown, onmousemove };
   });
 });
 
 document.getElementById("lineDraw").addEventListener("click", () => {
-  canvas.performWhileMouseDown(() => {
-    const image = new Image();
-    let x, y, position;
-
-    const onmousedown = ({ pageX, pageY }) => {
-      position = canvas.getPosition();
-      x = pageX - position.left;
-      y = pageY - position.top;
-      image.src = canvas.getOctetStream();
-    };
-
-    const onmousemove = ({ pageX, pageY }) => {
-      canvas.drawWithoutCommit((context) => {
-        const canvasSize = canvas.getSize();
-        context.drawImage(image, 0, 0, canvasSize.width, canvasSize.height);
+  canvas.performWhilePointerDown(() => {
+    let moved = false;
+    return {
+      onmousemove: ({ start, point, context }) => {
+        moved = point.x !== start.x || point.y !== start.y;
+        if (!moved) return;
         context.beginPath();
-        context.moveTo(x, y);
-        context.lineTo(pageX - position.left, pageY - position.top);
+        context.moveTo(start.x, start.y);
+        context.lineTo(point.x, point.y);
         context.stroke();
-        context.closePath();
-      });
+      },
+      onmouseup: () => moved,
     };
-
-    return { onmousedown, onmousemove };
   });
 });
 
 // Crop
 document.getElementById("cropButton").addEventListener("click", () => {
-  canvas.performWhileMouseDown(() => {
-    const image = new Image();
-    let startX, startY, position, width, height;
-
-    const onmousedown = ({ pageX, pageY }) => {
-      position = canvas.getPosition();
-      // save the starting x/y of the rectangle
-      startX = pageX - position.left;
-      startY = pageY - position.top;
-      image.src = canvas.getOctetStream();
-    };
-
-    const onmousemove = ({ pageX, pageY }) => {
-      const mouseX = pageX - position.left;
-      const mouseY = pageY - position.top;
-      width = mouseX - startX;
-      height = mouseY - startY;
-
-      canvas.drawWithoutCommit((context) => {
-        // Draw the initial image on the canvas
-        // to get rid of the previous rectangle
-        const canvasSize = canvas.getSize();
-        context.drawImage(image, 0, 0, canvasSize.width, canvasSize.height);
-
-        if (!width || !height) return;
-        context.strokeRect(startX, startY, width, height);
-      });
-    };
-
-    const onmouseup = () => {
-      canvas.drawWithoutCommit((context) => {
-        const absoluteWidth = Math.abs(width);
-        const absoluteHeight = Math.abs(height);
-        canvas.resize({ width: absoluteWidth, height: absoluteHeight });
-        context.drawImage(
-          image,
-          startX,
-          startY,
-          width,
-          height,
-          0,
-          0,
-          absoluteWidth,
-          absoluteHeight
-        );
-      });
-    };
-    return { onmousedown, onmousemove, onmouseup };
-  });
+  canvas.performWhilePointerDown(() => ({
+    commitOverlay: false,
+    onmousemove: ({ start, point, context }) => {
+      const width = point.x - start.x;
+      const height = point.y - start.y;
+      if (width && height) context.strokeRect(start.x, start.y, width, height);
+    },
+    onmouseup: ({ start, point }) => canvas.crop(start, point),
+  }));
 });
 
 // Resize modal
@@ -227,7 +159,11 @@ document
       image.src = canvas.getOctetStream();
       image.width = widthInput.value;
       image.height = heightInput.value;
-      image.onload = () => canvas.drawImage(image);
+      image.onload = () =>
+        canvas.drawImage(image, {
+          width: Number(widthInput.value),
+          height: Number(heightInput.value),
+        });
       modal.hide();
     });
   });
