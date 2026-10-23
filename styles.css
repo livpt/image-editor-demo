@@ -44,7 +44,7 @@ summary,
   height: 100%;
   margin: 0;
   padding: 6px 12px;
-  overflow-x: auto;
+  overflow: visible;
   border: 0;
 }
 
