@@ -1,0 +1,36 @@
+---
+description: Archive finished planning docs so active openspec/changes stays empty of done work
+alwaysApply: true
+---
+
+# Archive obsolete planning documents
+
+When a feature, change, or plan is **finished building** (merged, shipped, or abandoned as superseded), treat its planning artifacts as obsolete. Do not leave them where agents look for active work.
+
+## What counts as planning (must leave the active tree)
+
+- OpenSpec **active** changes under `openspec/changes/<name>/` (proposal, design, tasks, delta specs)
+- Standalone plans, briefs, RFCs, design notes, roadmaps, and task lists added for that work under the repo (e.g. `docs/plans/`, `*.plan.md` checked into the project)
+- Draft specs that only existed to drive that change and were never meant as long-lived main specs
+
+## What to do at finish
+
+1. **OpenSpec changes:** run `/opsx-archive` (or `openspec archive <name> -y`) so the change moves to `openspec/changes/archive/YYYY-MM-DD-<name>/`. Prefer syncing delta specs into `openspec/specs/` when the change defined product behavior.
+2. **Other planning files:** move them into a dated archive path next to related work (prefer `openspec/changes/archive/` for OpenSpec-tied docs, or `docs/archive/YYYY-MM-DD-<slug>/` for ad-hoc plans). Do not delete history unless the user asks.
+3. Confirm `openspec list` shows **no** completed-but-unarchived changes before starting unrelated new feature work.
+4. Do not keep “done” proposals beside new work in `openspec/changes/`.
+
+## What must stay (not orphaned plans)
+
+- Main specs in `openspec/specs/` (behavior contracts after sync)
+- This repo’s Cursor rules and skills
+- Verification evidence and how-to (`test/manual/`, `.cursor/skills/verify-*`) — trim misleading “baseline failure” sections only when they still read as current bugs
+- Linear issues (update status there; do not mirror finished issue text into active OpenSpec changes)
+
+## When this fires
+
+- After merge of a feature branch whose OpenSpec change is complete
+- When the user says a change is done, shipped, or cancelled
+- During cleanup scans that find fully checked-off `tasks.md` still outside `archive/`
+
+If unsure whether a doc is still driving work, ask once; default to archiving anything whose tasks are all done and whose code already landed on `master`.
