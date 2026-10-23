@@ -93,13 +93,36 @@ function makeCanvas() {
     return { scratch, scratchContext };
   }
 
+  async function commitFromSource(source, { resetHistory = false, paint } = {}) {
+    let bitmap;
+    try {
+      bitmap = await createImageBitmap(source);
+    } catch (error) {
+      reportError(error);
+      throw error;
+    }
+
+    paint?.(bitmap);
+
+    return enqueue(() => {
+      if (resetHistory) history.reset(bitmap);
+      else history.add(bitmap);
+      emitState();
+      return true;
+    });
+  }
+
   async function replaceWithScratch(scratch, resetHistory = false) {
-    setSize({ width: scratch.width, height: scratch.height });
-    context.clearRect(0, 0, scratch.width, scratch.height);
-    context.drawImage(scratch, 0, 0);
-    hasContent = true;
-    canvasStack.hidden = false;
-    await captureSnapshot(resetHistory);
+    await commitFromSource(scratch, {
+      resetHistory,
+      paint: () => {
+        setSize({ width: scratch.width, height: scratch.height });
+        context.clearRect(0, 0, scratch.width, scratch.height);
+        context.drawImage(scratch, 0, 0);
+        hasContent = true;
+        canvasStack.hidden = false;
+      },
+    });
   }
 
   function restoreSnapshot(snapshot) {
@@ -107,26 +130,6 @@ function makeCanvas() {
     context.clearRect(0, 0, canvasEl.width, canvasEl.height);
     context.drawImage(snapshot, 0, 0);
     clearOverlay();
-  }
-
-  function captureSnapshot(reset = false) {
-    if (!hasContent) return Promise.resolve(false);
-
-    let snapshot;
-    try {
-      snapshot = createImageBitmap(canvasEl);
-    } catch (error) {
-      reportError(error);
-      return Promise.reject(error);
-    }
-
-    return enqueue(async () => {
-      const bitmap = await snapshot;
-      if (reset) history.reset(bitmap);
-      else history.add(bitmap);
-      emitState();
-      return true;
-    });
   }
 
   async function finishPointerSession(callbacks, session, cancelled) {
@@ -143,9 +146,23 @@ function makeCanvas() {
     });
 
     if (callbacks.commitOverlay !== false && shouldCommit !== false) {
-      context.drawImage(overlayEl, 0, 0);
-      clearOverlay();
-      await captureSnapshot();
+      const { scratch, scratchContext } = createScratchCanvas(
+        canvasEl.width,
+        canvasEl.height
+      );
+      scratchContext.drawImage(canvasEl, 0, 0);
+      scratchContext.drawImage(overlayEl, 0, 0);
+      try {
+        await commitFromSource(scratch, {
+          paint: () => {
+            context.clearRect(0, 0, canvasEl.width, canvasEl.height);
+            context.drawImage(scratch, 0, 0);
+            clearOverlay();
+          },
+        });
+      } catch {
+        clearOverlay();
+      }
     } else {
       clearOverlay();
     }
@@ -189,18 +206,44 @@ function makeCanvas() {
     },
 
     draw(drawOperation) {
-      drawOperation(context);
-      hasContent = true;
-      return captureSnapshot();
+      const width = canvasEl.width;
+      const height = canvasEl.height;
+      const { scratch, scratchContext } = createScratchCanvas(width, height);
+      if (hasContent) scratchContext.drawImage(canvasEl, 0, 0);
+      drawOperation(scratchContext);
+      return commitFromSource(scratch, {
+        paint: () => {
+          setSize({ width, height });
+          context.clearRect(0, 0, width, height);
+          context.drawImage(scratch, 0, 0);
+          hasContent = true;
+          canvasStack.hidden = false;
+        },
+      });
     },
 
     drawWithoutCommit(drawOperation) {
       drawOperation(context);
     },
 
-    commitDraw() {
-      hasContent = true;
-      return captureSnapshot();
+    async commitDraw() {
+      try {
+        await commitFromSource(canvasEl, {
+          paint: () => {
+            hasContent = true;
+            canvasStack.hidden = false;
+          },
+        });
+        return true;
+      } catch (error) {
+        if (history.present) restoreSnapshot(history.present);
+        else {
+          context.clearRect(0, 0, canvasEl.width, canvasEl.height);
+          hasContent = false;
+          clearOverlay();
+        }
+        throw error;
+      }
     },
 
     async loadImage(image) {
@@ -224,12 +267,18 @@ function makeCanvas() {
     drawImage(image, size = {}) {
       const width = size.width || image.width || image.naturalWidth;
       const height = size.height || image.height || image.naturalHeight;
-      setSize({ width, height });
-      context.clearRect(0, 0, width, height);
-      context.drawImage(image, 0, 0, width, height);
-      hasContent = true;
-      canvasStack.hidden = false;
-      return captureSnapshot(history.present === null);
+      const { scratch, scratchContext } = createScratchCanvas(width, height);
+      scratchContext.drawImage(image, 0, 0, width, height);
+      return commitFromSource(scratch, {
+        resetHistory: history.present === null,
+        paint: () => {
+          setSize({ width, height });
+          context.clearRect(0, 0, width, height);
+          context.drawImage(scratch, 0, 0);
+          hasContent = true;
+          canvasStack.hidden = false;
+        },
+      });
     },
 
     crop(start, end) {
@@ -238,10 +287,8 @@ function makeCanvas() {
       const height = Math.round(bounds.height);
       if (!width || !height) return Promise.resolve(false);
 
-      const scratch = document.createElement("canvas");
-      scratch.width = width;
-      scratch.height = height;
-      scratch.getContext("2d").drawImage(
+      const { scratch, scratchContext } = createScratchCanvas(width, height);
+      scratchContext.drawImage(
         canvasEl,
         bounds.x,
         bounds.y,
@@ -253,9 +300,13 @@ function makeCanvas() {
         height
       );
 
-      setSize({ width, height });
-      context.drawImage(scratch, 0, 0);
-      return captureSnapshot();
+      return commitFromSource(scratch, {
+        paint: () => {
+          setSize({ width, height });
+          context.clearRect(0, 0, width, height);
+          context.drawImage(scratch, 0, 0);
+        },
+      });
     },
 
     async resizeImage(size) {
