@@ -14,7 +14,7 @@ This directory is the maintained source for verifying the user-facing behavior o
 
 - Toolbar: `browser_snapshot` (`interactiveOnly: true`) then `browser_click` by accessible name. Open the `Draw` or `Filter` menu before clicking an item inside it.
 - Canvas gestures: `scripts/drag-pointer.js` with `from`/`to` in intrinsic canvas pixels.
-- State: `scripts/read-state.js` before and after every action. Pixel samples use intrinsic coordinates.
+- State: `scripts/read-state.js` before and after every action. Pixel samples use intrinsic coordinates. Its `layers` array is the panel as rendered, front of the stack first.
 - Wait on status text, `canUndo`/`canRedo`, or canvas size, never on a fixed delay.
 - Do not call app modules directly and report it as a user path.
 
@@ -43,3 +43,4 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 - [Crop](./crop.md) covers all four drag directions, empty crops, and undo restoring the original size.
 - [Resize](./resize.md) covers the dialog, ratio lock, validation and cancel.
 - [Filters, undo and redo](./filters-undo-redo.md) covers the four filters, the undo/redo stack and its 20-step cap, and export status.
+- [Layers](./layers.md) covers the layers panel: add, group, duplicate, delete, eye toggle, rename, pointer reorder, opacity and blend, painting the selected layer, and the group paint refusal.

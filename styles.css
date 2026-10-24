@@ -1,4 +1,5 @@
 :root {
+  --layers-width: 264px;
   color: #172033;
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
@@ -149,8 +150,246 @@ dialog input:focus-visible {
 .img-area {
   min-height: 100vh;
   padding-top: 72px;
+  padding-right: var(--layers-width);
   overflow: hidden;
   text-align: center;
+}
+
+.layers-panel {
+  position: fixed;
+  z-index: 9;
+  top: 72px;
+  right: 0;
+  bottom: 0;
+  width: var(--layers-width);
+  overflow: auto;
+  border-left: 1px solid #d4d9e3;
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.layers-controls {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+  padding: 10px 12px 16px;
+  border: 0;
+}
+
+.layers-controls:disabled {
+  opacity: 0.45;
+}
+
+.layers-controls:disabled .layers-list {
+  pointer-events: none;
+}
+
+.layers-controls legend {
+  padding: 0;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #33405c;
+}
+
+.layers-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.layers-actions button {
+  min-height: 34px;
+  padding: 0 8px;
+  border: 1px solid #aeb7c8;
+  border-radius: 7px;
+  background: #fff;
+  color: #25314b;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.layers-actions button:hover:not(:disabled) {
+  background: #edf2ff;
+  border-color: #7aa2ff;
+}
+
+.layers-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.layers-list,
+.layers-children {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.layers-list {
+  min-height: 2.5rem;
+  border: 1px solid #d4d9e3;
+  border-radius: 8px;
+  background: #fff;
+  touch-action: none;
+}
+
+.layers-list.dragging {
+  cursor: grabbing;
+}
+
+.layer-item {
+  margin: 0;
+}
+
+.layer-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 4px 8px 4px calc(6px + var(--depth, 0) * 16px);
+  border-bottom: 1px solid #eef1f6;
+  color: #25314b;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.layer-item:last-child > .layer-row {
+  border-bottom: 0;
+}
+
+.layer-item[aria-selected="true"] > .layer-row {
+  background: #e3ecff;
+  color: #0c2e83;
+}
+
+.layer-row:focus-visible {
+  outline: 3px solid #7aa2ff;
+  outline-offset: -3px;
+}
+
+.layer-row[data-drop="above"]::before,
+.layer-row[data-drop="below"]::after {
+  content: "";
+  position: absolute;
+  right: 6px;
+  left: 6px;
+  height: 3px;
+  border-radius: 2px;
+  background: #1749b7;
+}
+
+.layer-row[data-drop="above"]::before {
+  top: -2px;
+}
+
+.layer-row[data-drop="below"]::after {
+  bottom: -2px;
+}
+
+.layer-row[data-drop="into"] {
+  box-shadow: inset 0 0 0 2px #1749b7;
+}
+
+.layer-eye {
+  display: inline-flex;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #33405c;
+  cursor: pointer;
+}
+
+.layer-eye:hover {
+  background: rgba(23, 73, 183, 0.1);
+}
+
+.layer-eye[aria-pressed="false"] {
+  color: #aeb7c8;
+}
+
+.layer-eye[aria-pressed="false"] svg circle {
+  fill: none;
+}
+
+.layer-eye:focus-visible,
+.layer-rename:focus-visible,
+.layers-prop input:focus-visible,
+.layers-prop select:focus-visible {
+  outline: 3px solid #7aa2ff;
+  outline-offset: 1px;
+}
+
+.layer-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.9rem;
+}
+
+.layer-kind {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #eef1f6;
+  color: #59657d;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.layer-rename {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 28px;
+  padding: 2px 6px;
+  border: 1px solid #7aa2ff;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+.layers-props {
+  display: grid;
+  gap: 8px;
+}
+
+.layers-prop {
+  display: grid;
+  grid-template-columns: 4.2rem 1fr auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: #33405c;
+}
+
+.layers-prop input[type="range"] {
+  width: 100%;
+  min-width: 0;
+}
+
+.layers-prop output {
+  min-width: 2.2rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.layers-prop select {
+  grid-column: 2 / -1;
+  min-height: 34px;
+  padding: 4px 8px;
+  border: 1px solid #b8c0d1;
+  border-radius: 7px;
+  background: #fff;
 }
 
 .drag-helper {
@@ -330,9 +569,9 @@ dialog::backdrop {
 .console-panel {
   position: fixed;
   z-index: 11;
-  right: 12px;
+  right: calc(var(--layers-width) + 12px);
   bottom: 12px;
-  width: min(92vw, 28rem);
+  width: min(calc(100vw - var(--layers-width) - 24px), 28rem);
   border: 1px solid #d4d9e3;
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.96);
@@ -380,6 +619,27 @@ dialog::backdrop {
 
 .console-panel pre[data-error="true"] {
   color: #a32121;
+}
+
+@media (max-width: 760px) {
+  .img-area {
+    min-height: 0;
+    padding-right: 0;
+  }
+
+  .layers-panel {
+    position: static;
+    width: auto;
+    max-height: 50vh;
+    padding-bottom: 4rem;
+    border-left: 0;
+    border-top: 1px solid #d4d9e3;
+  }
+
+  .console-panel {
+    right: 12px;
+    width: min(92vw, 28rem);
+  }
 }
 
 @media (max-width: 560px) {

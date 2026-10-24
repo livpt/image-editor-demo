@@ -12,6 +12,7 @@ function entry(id, width = 1, height = 1) {
       id,
       width,
       height,
+      bytes: width * height * 4,
       closed: false,
       close() {
         this.closed = true;
@@ -19,6 +20,19 @@ function entry(id, width = 1, height = 1) {
     },
   };
 }
+
+test("snapshots without bytes or close are rejected instead of leaking", () => {
+  const noBytes = new HistoryStore();
+  noBytes.reset(entry("a"));
+  noBytes.add({ name: "x", label: "x", params: {}, snapshot: { close() {} } });
+  assert.throws(() => noBytes.add(entry("c")), TypeError);
+  assert.throws(() => noBytes.bytes, TypeError);
+
+  const noClose = new HistoryStore();
+  noClose.reset(entry("a"));
+  noClose.add({ name: "x", label: "x", params: {}, snapshot: { bytes: 4 } });
+  assert.throws(() => noClose.reset(entry("b")), TypeError);
+});
 
 test("caps past snapshots and closes the oldest resource", () => {
   const history = new HistoryStore(2);

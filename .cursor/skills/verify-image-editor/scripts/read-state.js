@@ -5,6 +5,10 @@
 // pixels you care about (intrinsic canvas coordinates). The pixel read goes
 // through getImageData on the committed canvas, so it reflects what Save would
 // export, not the in-progress overlay.
+//
+// `layers` lists the panel rows top to bottom (front of the stack first) as the
+// user sees them: name, kind, nesting depth, eye state, and which row is
+// selected. It is read from the DOM, not from window.app.
 ((samples) => {
   const canvas = document.getElementById("imageProcessed");
   const status = document.getElementById("appStatus");
@@ -16,6 +20,18 @@
     const [r, g, b, a] = context.getImageData(x, y, 1, 1).data;
     pixels[`${x},${y}`] = { r, g, b, a };
   }
+  const layers = [...document.querySelectorAll("#layersList .layer-row")].map((row) => {
+    const renameInput = row.querySelector(".layer-rename");
+    return {
+      id: Number(row.dataset.id),
+      kind: row.dataset.kind,
+      name: renameInput ? renameInput.value : row.querySelector(".layer-name")?.textContent ?? "",
+      depth: Number(row.style.getPropertyValue("--depth")) || 0,
+      visible: row.querySelector(".layer-eye")?.getAttribute("aria-pressed") === "true",
+      active: row.closest(".layer-item")?.getAttribute("aria-selected") === "true",
+      renaming: renameInput !== null,
+    };
+  });
   return {
     status: status.textContent,
     statusError: status.dataset.error,
@@ -26,6 +42,11 @@
     canUndo: !undo.disabled,
     canRedo: !redo.disabled,
     resizeDialogOpen: document.getElementById("resolutionDialog").open,
+    layersEnabled: !document.getElementById("layersControls").disabled,
+    layers,
+    activeLayer: layers.find((layer) => layer.active)?.name ?? null,
+    layerOpacity: Number(document.getElementById("layerOpacity").value),
+    layerBlend: document.getElementById("layerBlend").value,
     pixels,
   };
 })([[10, 10], [400, 300]]);

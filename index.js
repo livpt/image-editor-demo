@@ -8,8 +8,11 @@ import {
   scaleDimension,
   validateDimensions,
 } from "./image-utils.js";
+import { createLayerActionGate } from "./layer-action-gate.js";
+import { attachLayerDrag } from "./layer-drag.js";
 
 const controls = document.getElementById("controls");
+const layersControls = document.getElementById("layersControls");
 const dragAndDropZone = document.getElementById("dragAndDropZone");
 const dragHelper = document.querySelector(".drag-helper");
 const fileInput = document.getElementById("fileInput");
@@ -29,6 +32,7 @@ async function installDecodedImage(decoded, label) {
     await canvas.load(decoded.source, { label: `Load ${label}` });
     dragHelper.classList.add("invisible");
     controls.disabled = false;
+    layersControls.disabled = false;
     setStatus(`${label} is ready to edit.`);
   } finally {
     decoded.dispose();
@@ -228,10 +232,315 @@ window.addEventListener("keydown", (event) => {
   match.action();
 });
 
+const layersList = document.getElementById("layersList");
+const opacityInput = document.getElementById("layerOpacity");
+const opacityValue = document.getElementById("layerOpacityValue");
+const blendSelect = document.getElementById("layerBlend");
+
+const LAYER_STATUS = {
+  "layer.add": "Added a layer.",
+  "layer.group": "Grouped the layer.",
+  "layer.duplicate": "Duplicated the layer.",
+  "layer.delete": "Deleted the layer.",
+  "layer.rename": "Renamed the layer.",
+  "layer.reorder": "Moved the layer.",
+  "layer.visibility": "Toggled the layer.",
+  "layer.opacity": "Changed the layer opacity.",
+  "layer.blend": "Changed the layer blend mode.",
+};
+
+const EYE_ICON =
+  '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">' +
+  '<path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z" fill="none" stroke="currentColor" stroke-width="2"/>' +
+  '<circle cx="12" cy="12" r="3" fill="currentColor"/></svg>';
+
+async function runLayerCommand(name, params) {
+  try {
+    const result = await canvas.run(name, params);
+    setStatus(LAYER_STATUS[result.name]);
+    return result;
+  } catch (error) {
+    setStatus(error.message, true);
+    return null;
+  }
+}
+
+function locate(nodes, id, parentId = 0) {
+  for (let index = 0; index < nodes.length; index += 1) {
+    const node = nodes[index];
+    if (node.id === id) return { node, parentId, index };
+    if (node.kind === "group") {
+      const found = locate(node.children, id, node.id);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+function containsId(node, id) {
+  return node.id === id || (node.kind === "group" && node.children.some((c) => containsId(c, id)));
+}
+
+function activeNode() {
+  const doc = canvas.doc;
+  return doc.activeId === null ? null : locate(doc.layers, doc.activeId)?.node ?? null;
+}
+
+function renderRows(nodes, activeId, depth) {
+  const fragment = document.createDocumentFragment();
+  for (const node of [...nodes].reverse()) {
+    const item = document.createElement("li");
+    item.className = "layer-item";
+    item.setAttribute("role", "treeitem");
+    item.setAttribute("aria-selected", String(node.id === activeId));
+    item.dataset.id = node.id;
+
+    const row = document.createElement("div");
+    row.className = "layer-row";
+    row.dataset.id = node.id;
+    row.dataset.kind = node.kind;
+    row.style.setProperty("--depth", depth);
+    row.tabIndex = 0;
+    row.setAttribute("aria-label", node.kind === "group" ? `${node.name} (group)` : node.name);
+
+    const eye = document.createElement("button");
+    eye.type = "button";
+    eye.className = "layer-eye";
+    eye.setAttribute("aria-pressed", String(node.visible));
+    eye.setAttribute("aria-label", `${node.visible ? "Hide" : "Show"} ${node.name}`);
+    eye.innerHTML = EYE_ICON;
+
+    const name = document.createElement("span");
+    name.className = "layer-name";
+    name.textContent = node.name;
+
+    row.append(eye, name);
+    if (node.kind === "group") {
+      const kind = document.createElement("span");
+      kind.className = "layer-kind";
+      kind.textContent = "Group";
+      row.append(kind);
+    }
+    item.append(row);
+
+    if (node.kind === "group") {
+      const children = document.createElement("ul");
+      children.setAttribute("role", "group");
+      children.className = "layers-children";
+      children.append(renderRows(node.children, activeId, depth + 1));
+      item.append(children);
+    }
+    fragment.append(item);
+  }
+  return fragment;
+}
+
+function renderPanel() {
+  const doc = canvas.doc;
+  layersList.replaceChildren(renderRows(doc.layers, doc.activeId, 0));
+  const active = activeNode();
+  for (const id of ["layerAdd", "layerGroup", "layerDuplicate", "layerDelete"]) {
+    document.getElementById(id).disabled = doc.busy || !doc.hasContent;
+  }
+  opacityInput.disabled = blendSelect.disabled = doc.busy || !active;
+  if (doc.busy || !active) return;
+  opacityInput.value = String(active.opacity);
+  opacityValue.value = String(active.opacity);
+  blendSelect.value = active.blend;
+}
+
+window.addEventListener("canvasstatechange", renderPanel);
+
+function activateRow(id) {
+  try {
+    canvas.activate(id);
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+}
+
+const layerButtons = {
+  layerAdd: () => runLayerCommand("layer.add"),
+  layerGroup: () => runLayerCommand("layer.group", { id: canvas.doc.activeId }),
+  layerDuplicate: () => runLayerCommand("layer.duplicate", { id: canvas.doc.activeId }),
+  layerDelete: () => runLayerCommand("layer.delete", { id: canvas.doc.activeId }),
+};
+const layerActionGate = createLayerActionGate();
+for (const [id, action] of Object.entries(layerButtons)) {
+  const button = document.getElementById(id);
+  const holdRename = (event) => {
+    if (event.button !== 0 || !document.querySelector(".layer-rename")) return;
+    layerActionGate.holdForButton();
+  };
+  button.addEventListener("pointerdown", holdRename);
+  button.addEventListener("mousedown", (event) => {
+    holdRename(event);
+    if (event.button !== 0 || !document.querySelector(".layer-rename")) return;
+    event.preventDefault();
+  });
+  button.addEventListener("click", () => {
+    layerActionGate.activate(action);
+  });
+}
+
+function startRename(row) {
+  const node = locate(canvas.doc.layers, Number(row.dataset.id))?.node;
+  const nameEl = row.querySelector(".layer-name");
+  if (!node || !nameEl) return;
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "layer-rename";
+  input.value = node.name;
+  input.maxLength = 80;
+  input.setAttribute("aria-label", `Rename ${node.name}`);
+  let done = false;
+  let inflight = Promise.resolve(null);
+  const finish = (commit) => {
+    if (done) return inflight;
+    done = true;
+    const next = input.value.trim();
+    if (!commit || next === node.name) {
+      renderPanel();
+      return inflight;
+    }
+    inflight = runLayerCommand("layer.rename", { id: node.id, name: next }).then((result) => {
+      if (!result) renderPanel();
+      return result;
+    });
+    return inflight;
+  };
+  layerActionGate.open(() => finish(true));
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      finish(true);
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      finish(false);
+    }
+  });
+  input.addEventListener("blur", (event) => {
+    if (done) return;
+    const next = event.relatedTarget;
+    if (next && Object.hasOwn(layerButtons, next.id)) layerActionGate.holdForButton();
+    if (layerActionGate.blur() !== null) return;
+    const commitLater = () => {
+      if (!done) layerActionGate.flush();
+    };
+    if (next && Object.hasOwn(layerButtons, next.id)) {
+      next.addEventListener("blur", commitLater, { once: true });
+    } else {
+      setTimeout(commitLater, 0);
+    }
+  });
+  nameEl.replaceWith(input);
+  input.focus();
+  input.select();
+}
+
+layersList.addEventListener("click", (event) => {
+  const eye = event.target.closest(".layer-eye");
+  if (!eye) return;
+  const id = Number(eye.closest(".layer-row").dataset.id);
+  const node = locate(canvas.doc.layers, id)?.node;
+  if (node) runLayerCommand("layer.visibility", { id, visible: !node.visible });
+});
+
+layersList.addEventListener("dblclick", (event) => {
+  const row = event.target.closest(".layer-row");
+  if (!row || event.target.closest("button, input")) return;
+  startRename(row);
+});
+
+layersList.addEventListener("keydown", (event) => {
+  const row = event.target.closest(".layer-row");
+  if (!row || event.target !== row) return;
+  if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    activateRow(Number(row.dataset.id));
+  } else if (event.key === "F2") {
+    event.preventDefault();
+    startRename(row);
+  }
+});
+
+function dropZone(row, clientY) {
+  const rect = row.getBoundingClientRect();
+  const ratio = (clientY - rect.top) / rect.height;
+  if (row.dataset.kind === "group") {
+    if (ratio < 0.25) return "above";
+    if (ratio > 0.75) return "below";
+    return "into";
+  }
+  return ratio < 0.5 ? "above" : "below";
+}
+
+function dropTargetAt(clientX, clientY, draggedId) {
+  const row = document.elementFromPoint(clientX, clientY)?.closest(".layer-row");
+  if (!row || !layersList.contains(row)) return null;
+  const targetId = Number(row.dataset.id);
+  const dragged = locate(canvas.doc.layers, draggedId);
+  if (!dragged || containsId(dragged.node, targetId)) return null;
+  return { row, id: targetId, zone: dropZone(row, clientY) };
+}
+
+function dropOn(draggedId, target) {
+  const { layers } = canvas.doc;
+  const dragged = locate(layers, draggedId);
+  const destination = locate(layers, target.id);
+  if (!dragged || !destination) return;
+  let parentId;
+  let index;
+  if (target.zone === "into") {
+    parentId = target.id;
+    index = destination.node.children.length;
+  } else {
+    parentId = destination.parentId;
+    index = target.zone === "above" ? destination.index + 1 : destination.index;
+  }
+  if (parentId === dragged.parentId) {
+    if (index > dragged.index) index -= 1;
+    if (index === dragged.index) return;
+  }
+  runLayerCommand("layer.reorder", { id: draggedId, parentId, index });
+}
+
+attachLayerDrag(layersList, {
+  isBusy: () => canvas.doc.busy,
+  dropTargetAt,
+  onActivate: activateRow,
+  onDrop: dropOn,
+});
+
+opacityInput.addEventListener("input", () => {
+  opacityValue.value = opacityInput.value;
+  const id = canvas.doc.activeId;
+  if (id === null) return;
+  try {
+    canvas.previewOpacity(id, Number(opacityInput.value));
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+});
+
+opacityInput.addEventListener("change", () => {
+  const node = activeNode();
+  const opacity = Number(opacityInput.value);
+  if (!node || node.opacity === opacity) return;
+  runLayerCommand("layer.opacity", { id: node.id, opacity });
+});
+
+blendSelect.addEventListener("change", () => {
+  const node = activeNode();
+  if (!node || node.blend === blendSelect.value) return;
+  runLayerCommand("layer.blend", { id: node.id, blend: blendSelect.value });
+});
+
 window.app = Object.freeze({
   run: canvas.run,
   undo: canvas.undo,
   redo: canvas.redo,
+  activate: canvas.activate,
   commands: canvas.commands,
   get doc() {
     return canvas.doc;

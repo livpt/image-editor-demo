@@ -24,7 +24,7 @@ This is not a TLA+ model. Do not use `/statechart` for its results.
 | Module | `history-store.js` |
 | Class / methods | `HistoryStore` — `add`, `reset`, `undo`, `redo`, `dispose`, `entries`, getters `canUndo` / `canRedo` / `size` / `bytes` |
 | Callers in scope (read-only for this check) | `canvas.js` uses the store; the check does not drive the canvas |
-| Sync commit | `c084ee969f53eb2bdb64e6df88dfca12a4ecf00c` |
+| Sync commit | `a6cafc8eb1182766d68b2ce337b53ca145982f04` |
 | Bounds | default `--depth 5 --limit 2` (~1k states); raise depth when changing the stack logic |
 
 Move the sync commit forward only after you confirm the check still describes the code at the new commit (re-run pass + one `--break` proof).
@@ -58,13 +58,13 @@ node .cursor/skills/verify-history-store/check.mjs --break no-branch-clear
 After every step:
 
 1. `past.length <= limit`
-2. Past snapshot bytes (`width * height * 4`) stay within `maxBytes`. Present is exempt.
+2. Past snapshot bytes (`snapshot.bytes`, which a layered Document sets to every layer bitmap plus the composite) stay within `maxBytes`. Present is exempt.
 3. `bytes` equals the past total only. Present and future are outside the budget. `size` matches the three arrays. `canUndo` / `canRedo` match lengths.
 4. No duplicate snapshot appears in past, present, and future together
 5. Every snapshot still in the store is not closed
 6. Every snapshot that left the store is closed exactly once
 
-Entries are `{ name, label, params, snapshot }`. `close` runs on `snapshot`.
+Entries are `{ name, label, params, snapshot }`. A snapshot is Document-shaped: the store reads `snapshot.bytes` and calls `snapshot.close()`, and throws a `TypeError` when either is missing rather than counting the snapshot as free or leaking it.
 
 Postconditions:
 
@@ -73,7 +73,7 @@ Postconditions:
 - `undo` returns `{ present, undone }` or `null`. `redo` returns `{ present, redone }` or `null`. The old present moves onto the opposite stack.
 - `dispose` leaves the store empty
 
-The script also runs one direct byte-cap case. A 16-byte budget closes the oldest past frame and leaves the present open. A present frame larger than the budget stays until a later edit.
+The script also runs direct byte-cap cases. A 32-byte budget closes the oldest past frame and leaves the present open. A frame whose `bytes` folds in more layers evicts sooner. A present frame larger than the budget stays until a later edit. A snapshot without `bytes` makes the next `add` throw.
 
 ## Reading a failure
 

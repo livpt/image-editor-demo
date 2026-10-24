@@ -95,6 +95,35 @@
       </div>
     </main>
 
+    <aside id="layersPanel" class="layers-panel" aria-labelledby="layersTitle">
+      <fieldset id="layersControls" class="layers-controls" disabled>
+        <legend id="layersTitle">Layers</legend>
+        <div class="layers-actions" role="toolbar" aria-label="Layer actions">
+          <button type="button" id="layerAdd">Add layer</button>
+          <button type="button" id="layerGroup">Add group</button>
+          <button type="button" id="layerDuplicate">Duplicate</button>
+          <button type="button" id="layerDelete">Delete</button>
+        </div>
+        <ul id="layersList" class="layers-list" role="tree" aria-label="Layer stack"></ul>
+        <div class="layers-props">
+          <label class="layers-prop">
+            <span>Opacity</span>
+            <input id="layerOpacity" type="range" min="0" max="100" step="1" value="100" />
+            <output id="layerOpacityValue" for="layerOpacity">100</output>
+          </label>
+          <label class="layers-prop">
+            <span>Blend</span>
+            <select id="layerBlend">
+              <option value="normal">Normal</option>
+              <option value="multiply">Multiply</option>
+              <option value="screen">Screen</option>
+              <option value="overlay">Overlay</option>
+            </select>
+          </label>
+        </div>
+      </fieldset>
+    </aside>
+
     <dialog id="resolutionDialog" aria-labelledby="resolutionTitle">
       <form id="resolutionForm">
         <div class="dialog-header">
