@@ -30,6 +30,6 @@ When a pull request for this repo is **merged** (or the user says the PR landed 
 
 - Immediately after you (or the user) merge a feature PR
 - When the user says a PR merged and asks to clean up
-- During post-merge cleanup next to archiving finished OpenSpec changes
+- During post-merge cleanup next to archiving finished plans
 
 Default to deleting both local and remote once merge is confirmed. If only one side remains, delete that side.
