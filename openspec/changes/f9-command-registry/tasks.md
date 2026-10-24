@@ -24,8 +24,8 @@
 
 ## 5. Large-image check
 
-- [ ] 5.1 Run `npm test`, `npm run build`, and `node .cursor/skills/verify-history-store/check.mjs`.
-- [ ] 5.2 With the 4000 by 3000 fixture, run a filter and undo, and confirm one history entry per action. Confirm invalid parameters leave the canvas unchanged. Confirm 25 edits on a small image leave 20 undo steps, and confirm the byte cap evicts prior 4000 by 3000 frames before the count reaches 20.
+- [x] 5.1 Run `npm test`, `npm run build`, and `node .cursor/skills/verify-history-store/check.mjs`.
+- [x] 5.2 With the 4000 by 3000 fixture, run a filter and undo, and confirm one history entry per action. Confirm invalid parameters leave the canvas unchanged. Confirm 25 edits on a small image leave 20 undo steps, and confirm the byte cap evicts prior 4000 by 3000 frames before the count reaches 20.
 
 ## Workflow follow-up
 

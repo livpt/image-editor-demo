@@ -83,18 +83,29 @@ function makeCanvas() {
     emitState();
 
     const result = operationQueue.then(operation);
-    operationQueue = result
-      .catch((error) => {
+    const settled = result.then(
+      (value) => value,
+      (error) => {
         // Pointer-up awaits this rejection too, and must not report it a second time.
         if (error && typeof error === "object") error.reported = true;
         reportError(error);
-      })
-      .finally(() => {
+        throw error;
+      }
+    );
+    // Drop the busy flag before `settled` resumes the caller, so an awaited
+    // command can be followed by another one. The flag is still raised before
+    // this function returns, so a second call in the same turn stays busy.
+    operationQueue = settled.then(
+      () => {
         pendingOperations -= 1;
         emitState();
-      });
-
-    return result;
+      },
+      () => {
+        pendingOperations -= 1;
+        emitState();
+      }
+    );
+    return settled;
   }
 
   function setSize({ width, height }) {
