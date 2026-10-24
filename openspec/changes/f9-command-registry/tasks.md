@@ -8,7 +8,7 @@
 
 ## 2. Command registry
 
-- [ ] 2.1 Add `commands.js` with `define`, `get`, `list`, and `dispatch`, and hand-written parameter checks. Verify `test/commands.test.js` covers JSON listing, a successful dispatch, invalid parameters, and a duplicate name.
+- [x] 2.1 Add `commands.js` with `define`, `get`, `list`, and `dispatch`, and hand-written parameter checks. Verify `test/commands.test.js` covers JSON listing, a successful dispatch, invalid parameters, and a duplicate name.
 
 ## 3. Session adapter
 
