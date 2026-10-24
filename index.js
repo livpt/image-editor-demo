@@ -8,6 +8,7 @@ import {
   scaleDimension,
   validateDimensions,
 } from "./image-utils.js";
+import { attachLayerDrag } from "./layer-drag.js";
 
 const controls = document.getElementById("controls");
 const layersControls = document.getElementById("layersControls");
@@ -431,9 +432,6 @@ layersList.addEventListener("keydown", (event) => {
   }
 });
 
-const DRAG_THRESHOLD = 4;
-let drag = null;
-
 function dropZone(row, clientY) {
   const rect = row.getBoundingClientRect();
   const ratio = (clientY - rect.top) / rect.height;
@@ -443,10 +441,6 @@ function dropZone(row, clientY) {
     return "into";
   }
   return ratio < 0.5 ? "above" : "below";
-}
-
-function clearDropMarks() {
-  for (const marked of layersList.querySelectorAll("[data-drop]")) delete marked.dataset.drop;
 }
 
 function dropTargetAt(clientX, clientY, draggedId) {
@@ -479,67 +473,11 @@ function dropOn(draggedId, target) {
   runLayerCommand("layer.reorder", { id: draggedId, parentId, index });
 }
 
-function endDrag() {
-  if (!drag) return;
-  if (drag.captured) {
-    try {
-      layersList.releasePointerCapture(drag.pointerId);
-    } catch {
-      // Capture may already be released.
-    }
-  }
-  layersList.classList.remove("dragging");
-  clearDropMarks();
-  drag = null;
-}
-
-layersList.addEventListener("pointerdown", (event) => {
-  const row = event.target.closest(".layer-row");
-  if (!row || event.target.closest("button, input, select")) return;
-  if (event.pointerType === "mouse" && event.button !== 0) return;
-  if (canvas.doc.busy) return;
-  drag = {
-    id: Number(row.dataset.id),
-    pointerId: event.pointerId,
-    startX: event.clientX,
-    startY: event.clientY,
-    moved: false,
-    captured: false,
-    target: null,
-  };
-});
-
-layersList.addEventListener("pointermove", (event) => {
-  if (!drag || event.pointerId !== drag.pointerId) return;
-  if (!drag.moved) {
-    if (
-      Math.abs(event.clientX - drag.startX) < DRAG_THRESHOLD &&
-      Math.abs(event.clientY - drag.startY) < DRAG_THRESHOLD
-    ) {
-      return;
-    }
-    drag.moved = true;
-    layersList.classList.add("dragging");
-    layersList.setPointerCapture(event.pointerId);
-    drag.captured = true;
-  }
-  event.preventDefault();
-  clearDropMarks();
-  drag.target = dropTargetAt(event.clientX, event.clientY, drag.id);
-  if (drag.target) drag.target.row.dataset.drop = drag.target.zone;
-});
-
-layersList.addEventListener("pointerup", (event) => {
-  if (!drag || event.pointerId !== drag.pointerId) return;
-  const { id, moved, target } = drag;
-  endDrag();
-  if (!moved) activateRow(id);
-  else if (target) dropOn(id, target);
-});
-
-layersList.addEventListener("pointercancel", endDrag);
-layersList.addEventListener("lostpointercapture", () => {
-  if (drag?.captured) endDrag();
+attachLayerDrag(layersList, {
+  isBusy: () => canvas.doc.busy,
+  dropTargetAt,
+  onActivate: activateRow,
+  onDrop: dropOn,
 });
 
 opacityInput.addEventListener("input", () => {
