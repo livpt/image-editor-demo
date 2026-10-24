@@ -8,6 +8,7 @@ import {
   scaleDimension,
   validateDimensions,
 } from "./image-utils.js";
+import { createLayerActionGate } from "./layer-action-gate.js";
 import { attachLayerDrag } from "./layer-drag.js";
 
 const controls = document.getElementById("controls");
@@ -364,8 +365,22 @@ const layerButtons = {
   layerDuplicate: () => runLayerCommand("layer.duplicate", { id: canvas.doc.activeId }),
   layerDelete: () => runLayerCommand("layer.delete", { id: canvas.doc.activeId }),
 };
+const layerActionGate = createLayerActionGate();
 for (const [id, action] of Object.entries(layerButtons)) {
-  document.getElementById(id).addEventListener("click", action);
+  const button = document.getElementById(id);
+  const holdRename = (event) => {
+    if (event.button !== 0 || !document.querySelector(".layer-rename")) return;
+    layerActionGate.holdForButton();
+  };
+  button.addEventListener("pointerdown", holdRename);
+  button.addEventListener("mousedown", (event) => {
+    holdRename(event);
+    if (event.button !== 0 || !document.querySelector(".layer-rename")) return;
+    event.preventDefault();
+  });
+  button.addEventListener("click", () => {
+    layerActionGate.activate(action);
+  });
 }
 
 function startRename(row) {
@@ -379,18 +394,22 @@ function startRename(row) {
   input.maxLength = 80;
   input.setAttribute("aria-label", `Rename ${node.name}`);
   let done = false;
+  let inflight = Promise.resolve(null);
   const finish = (commit) => {
-    if (done) return;
+    if (done) return inflight;
     done = true;
     const next = input.value.trim();
     if (!commit || next === node.name) {
       renderPanel();
-      return;
+      return inflight;
     }
-    runLayerCommand("layer.rename", { id: node.id, name: next }).then((result) => {
+    inflight = runLayerCommand("layer.rename", { id: node.id, name: next }).then((result) => {
       if (!result) renderPanel();
+      return result;
     });
+    return inflight;
   };
+  layerActionGate.open(() => finish(true));
   input.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       event.preventDefault();
@@ -400,7 +419,20 @@ function startRename(row) {
       finish(false);
     }
   });
-  input.addEventListener("blur", () => finish(true));
+  input.addEventListener("blur", (event) => {
+    if (done) return;
+    const next = event.relatedTarget;
+    if (next && Object.hasOwn(layerButtons, next.id)) layerActionGate.holdForButton();
+    if (layerActionGate.blur() !== null) return;
+    const commitLater = () => {
+      if (!done) layerActionGate.flush();
+    };
+    if (next && Object.hasOwn(layerButtons, next.id)) {
+      next.addEventListener("blur", commitLater, { once: true });
+    } else {
+      setTimeout(commitLater, 0);
+    }
+  });
   nameEl.replaceWith(input);
   input.focus();
   input.select();

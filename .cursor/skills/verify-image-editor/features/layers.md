@@ -61,3 +61,4 @@ Preconditions:
 - Delete with a group selected removes the group and every layer inside it. The last-layer refusal counts pixel layers across the whole tree, so deleting a group that holds the only pixel layer is refused even if a sibling group is empty.
 - Hidden layers and opacity `0` are excluded from `#imageProcessed`, so they are also excluded from Save. Sample pixels, not the row state, to prove it.
 - The accessible name of an eye button changes with its state (`Hide X` when visible, `Show X` when hidden). Re-snapshot before clicking it a second time.
+- Clicking `Add layer`, `Add group`, `Duplicate`, or `Delete` while a rename field is open commits the new name and then runs that button. The status line shows the button's message. History contains the rename and then the button command.
