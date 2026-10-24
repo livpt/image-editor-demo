@@ -59,7 +59,7 @@ After every step:
 
 1. `past.length <= limit`
 2. Past snapshot bytes (`width * height * 4`) stay within `maxBytes`. Present is exempt.
-3. `bytes` equals the past and future total. `size` matches the three arrays. `canUndo` / `canRedo` match lengths.
+3. `bytes` equals the past total only. Present and future are outside the budget. `size` matches the three arrays. `canUndo` / `canRedo` match lengths.
 4. No duplicate snapshot appears in past, present, and future together
 5. Every snapshot still in the store is not closed
 6. Every snapshot that left the store is closed exactly once

@@ -118,16 +118,13 @@ function checkInvariants(history, allSnapshots, stepLabel) {
   if (history.canUndo !== history.past.length > 0) errors.push(`canUndo mismatch`);
   if (history.canRedo !== history.future.length > 0) errors.push(`canRedo mismatch`);
 
-  let expectedBytes = 0;
-  for (const entry of history.past) expectedBytes += snapshotBytes(entry.snapshot);
-  for (const entry of history.future) expectedBytes += snapshotBytes(entry.snapshot);
-  if (history.bytes !== expectedBytes) {
-    errors.push(`bytes ${history.bytes} != past+future ${expectedBytes}`);
-  }
   const pastBytes = history.past.reduce(
     (sum, entry) => sum + snapshotBytes(entry.snapshot),
     0
   );
+  if (history.bytes !== pastBytes) {
+    errors.push(`bytes ${history.bytes} != past ${pastBytes}`);
+  }
   if (pastBytes > history.maxBytes) {
     errors.push(`past bytes ${pastBytes} exceed maxBytes ${history.maxBytes}`);
   }
