@@ -51,11 +51,24 @@ function describe(schema) {
     const minLength = schema.minLength ?? 0;
     return minLength > 0 ? `must be at least ${minLength} points` : "must be a list of points";
   }
+  if (schema.type === "string") {
+    if (schema.enum) return `must be one of ${schema.enum.map((item) => `"${item}"`).join(", ")}`;
+    const bounds = [];
+    if (schema.minLength !== undefined) bounds.push(`at least ${schema.minLength}`);
+    if (schema.maxLength !== undefined) bounds.push(`at most ${schema.maxLength}`);
+    if (!bounds.length) return "must be a string";
+    return `must be a string of ${bounds.join(" and ")} characters`;
+  }
+  if (schema.type === "boolean") return "must be true or false";
   return "is invalid";
 }
 
 function finiteBound(value) {
   return value === undefined || Number.isFinite(value);
+}
+
+function lengthBound(value) {
+  return value === undefined || (Number.isInteger(value) && value >= 0);
 }
 
 function isFieldSchema(schema) {
@@ -81,11 +94,32 @@ function isFieldSchema(schema) {
   if (schema.type === "points") {
     return (
       Object.keys(schema).every((key) => key === "type" || key === "minLength") &&
-      (schema.minLength === undefined ||
-        (Number.isInteger(schema.minLength) && schema.minLength >= 0))
+      lengthBound(schema.minLength)
     );
   }
+  if (schema.type === "string") {
+    return (
+      Object.keys(schema).every((key) =>
+        ["type", "trim", "minLength", "maxLength", "enum", "default"].includes(key)
+      ) &&
+      (schema.trim === undefined || typeof schema.trim === "boolean") &&
+      lengthBound(schema.minLength) &&
+      lengthBound(schema.maxLength) &&
+      (schema.enum === undefined ||
+        (Array.isArray(schema.enum) &&
+          schema.enum.length > 0 &&
+          schema.enum.every((item) => typeof item === "string")))
+    );
+  }
+  if (schema.type === "boolean") {
+    return Object.keys(schema).every((key) => key === "type" || key === "default");
+  }
   return false;
+}
+
+function normalizeField(schema, value) {
+  if (schema.type === "string" && schema.trim && typeof value === "string") return value.trim();
+  return value;
 }
 
 function fieldProblem(schema, value) {
@@ -118,6 +152,16 @@ function fieldProblem(schema, value) {
     if (schema.exclusiveMin !== undefined && value <= schema.exclusiveMin) return describe(schema);
     return null;
   }
+  if (schema.type === "string") {
+    if (typeof value !== "string") return describe(schema);
+    if (schema.enum && !schema.enum.includes(value)) return describe(schema);
+    if (schema.minLength !== undefined && value.length < schema.minLength) return describe(schema);
+    if (schema.maxLength !== undefined && value.length > schema.maxLength) return describe(schema);
+    return null;
+  }
+  if (schema.type === "boolean") {
+    return typeof value === "boolean" ? null : describe(schema);
+  }
   return describe(schema);
 }
 
@@ -139,7 +183,10 @@ function assertSpec(spec) {
     if (!isFieldSchema(schema)) {
       throw new CommandError("spec", `${spec.name}: "${field}" has an invalid schema.`);
     }
-    if (schema.default !== undefined && fieldProblem(schema, schema.default)) {
+    if (
+      schema.default !== undefined &&
+      fieldProblem(schema, normalizeField(schema, schema.default))
+    ) {
       throw new CommandError("spec", `${spec.name}: "${field}" has a default outside its schema.`);
     }
   }
@@ -159,7 +206,7 @@ function parseParams(spec, raw) {
   const problems = [];
   const filled = {};
   for (const [field, schema] of Object.entries(spec.params)) {
-    const value = raw[field] ?? schema.default;
+    const value = normalizeField(schema, raw[field] ?? schema.default);
     if (value === undefined) {
       problems.push(`"${field}" is required`);
       continue;

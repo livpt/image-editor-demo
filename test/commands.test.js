@@ -194,3 +194,82 @@ test("point lists accept finite points and reject a short pen stroke", () => {
     (error) => error.code === "invalid" && error.message.includes("at least 2 points")
   );
 });
+
+test("strings trim, enforce length bounds, and null picks the default", () => {
+  const registry = createRegistry();
+  registry.define({
+    name: "layer.rename",
+    label: "Rename",
+    historyMode: "add",
+    params: {
+      name: { type: "string", trim: true, minLength: 1, maxLength: 5, default: " Layer " },
+    },
+    execute: (params) => ({ source: params.name }),
+  });
+
+  assert.equal(registry.dispatch("layer.rename", { name: "  ab " }).params.name, "ab");
+  assert.equal(registry.dispatch("layer.rename", { name: null }).params.name, "Layer");
+  assert.equal(registry.dispatch("layer.rename", {}).params.name, "Layer");
+  for (const bad of ["   ", "abcdef", 7, ["a"]]) {
+    assert.throws(
+      () => registry.dispatch("layer.rename", { name: bad }),
+      (error) =>
+        error.code === "invalid" &&
+        error.message ===
+          'layer.rename: "name" must be a string of at least 1 and at most 5 characters.'
+    );
+  }
+});
+
+test("string enums and booleans accept only their members", () => {
+  const registry = createRegistry();
+  registry.define({
+    name: "layer.blend",
+    label: "Blend",
+    historyMode: "add",
+    params: {
+      blend: { type: "string", enum: ["normal", "multiply"] },
+      visible: { type: "boolean", default: true },
+    },
+    execute: (params) => ({ source: params }),
+  });
+
+  assert.deepEqual(registry.dispatch("layer.blend", { blend: "multiply" }).params, {
+    blend: "multiply",
+    visible: true,
+  });
+  assert.equal(
+    registry.dispatch("layer.blend", { blend: "normal", visible: false }).params.visible,
+    false
+  );
+  assert.throws(
+    () => registry.dispatch("layer.blend", { blend: "screen", visible: "yes" }),
+    (error) =>
+      error.code === "invalid" &&
+      error.message ===
+        'layer.blend: "blend" must be one of "normal", "multiply"; "visible" must be true or false.'
+  );
+  assert.throws(
+    () => registry.dispatch("layer.blend", { blend: " normal" }),
+    (error) => error.code === "invalid"
+  );
+});
+
+test("string and boolean specs reject malformed schemas and defaults", () => {
+  const registry = createRegistry();
+  const define = (params) =>
+    registry.define({ name: "x.y", label: "X", historyMode: "add", params, execute: () => ({}) });
+
+  assert.throws(() => define({ a: { type: "string", minLength: -1 } }), (e) => e.code === "spec");
+  assert.throws(() => define({ a: { type: "string", enum: [] } }), (e) => e.code === "spec");
+  assert.throws(() => define({ a: { type: "string", enum: [1] } }), (e) => e.code === "spec");
+  assert.throws(() => define({ a: { type: "string", trim: "yes" } }), (e) => e.code === "spec");
+  assert.throws(() => define({ a: { type: "string", pattern: ".*" } }), (e) => e.code === "spec");
+  assert.throws(
+    () => define({ a: { type: "string", maxLength: 2, default: "abc" } }),
+    (e) => e.code === "spec" && e.message.includes("default outside its schema")
+  );
+  assert.throws(() => define({ a: { type: "boolean", default: 1 } }), (e) => e.code === "spec");
+  assert.throws(() => define({ a: { type: "boolean", min: 0 } }), (e) => e.code === "spec");
+  define({ a: { type: "string", trim: true, minLength: 1, default: " ok " } });
+});
