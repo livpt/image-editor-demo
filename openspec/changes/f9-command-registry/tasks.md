@@ -3,7 +3,7 @@
 ## 1. History entries
 
 - [x] 1.1 Change `HistoryStore` entries to `{ name, label, params, snapshot }`, close `.snapshot`, accept a numeric limit or `{ limit, maxBytes }`, and expose `bytes` and `entries()`. Verify `npm test` covers eviction, the byte cap, redo invalidation, and the undo/redo result shape.
-- [ ] 1.2 Update `.cursor/skills/verify-history-store/check.mjs` for entry objects and record the sync commit in that skill. Verify `node .cursor/skills/verify-history-store/check.mjs` exits 0.
+- [x] 1.2 Update `.cursor/skills/verify-history-store/check.mjs` for entry objects and record the sync commit in that skill. Verify `node .cursor/skills/verify-history-store/check.mjs` exits 0.
 - [x] 1.3 Wrap existing bitmaps in `canvas.js` so the current page still commits. Verify `npm run build` succeeds.
 
 ## 2. Command registry

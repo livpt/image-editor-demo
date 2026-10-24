@@ -358,7 +358,7 @@ async function main() {
           depth: opts.depth,
           limit: opts.limit,
           statesChecked: checked,
-          syncCommit: null,
+          syncCommit: "c084ee969f53eb2bdb64e6df88dfca12a4ecf00c",
         },
         null,
         2
