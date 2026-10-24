@@ -1,13 +1,24 @@
+import { CommandError, createRegistry } from "./commands.js";
+import { canvasToBlob } from "./image-io.js";
 import {
   createFrameScheduler,
   mapPointToCanvas,
   normalizeRect,
 } from "./image-utils.js";
 import { HistoryStore } from "./history-store.js";
-import { canvasToBlob } from "./image-io.js";
-import { enableCanvasFilter } from "./processing-utils.js";
+import { enableCanvasFilter, filters } from "./processing-utils.js";
 
 const HISTORY_LIMIT = 20;
+const HISTORY_BYTES = 256 * 1024 * 1024;
+const NUMBER_PARAM = { type: "number" };
+const POSITIVE_PARAM = { type: "number", exclusiveMin: 0 };
+
+const FILTER_LABELS = {
+  grayscale: "Grayscale",
+  threshold: "Threshold",
+  sepia: "Sepia",
+  invert: "Invert colors",
+};
 
 function makeCanvas() {
   const canvasEl = document.getElementById("imageProcessed");
@@ -15,18 +26,34 @@ function makeCanvas() {
   const canvasStack = document.getElementById("canvasStack");
   const context = canvasEl.getContext("2d");
   const overlayContext = overlayEl.getContext("2d");
-  const history = new HistoryStore(HISTORY_LIMIT);
+  const history = new HistoryStore({ limit: HISTORY_LIMIT, maxBytes: HISTORY_BYTES });
+  const registry = createRegistry();
 
-  let hasContent = false;
   let pendingOperations = 0;
   let operationQueue = Promise.resolve();
-  let removePointerTool = () => {};
+  let disarmTool = () => {};
+  let cancelOpenGesture = () => {};
+
+  function readDoc() {
+    const view = history.entries();
+    return Object.freeze({
+      width: canvasEl.width,
+      height: canvasEl.height,
+      hasContent: history.present !== null,
+      busy: pendingOperations > 0,
+      canUndo: history.canUndo,
+      canRedo: history.canRedo,
+      bytes: history.bytes,
+      history: view,
+    });
+  }
 
   function emitState() {
     const detail = {
       busy: pendingOperations > 0,
       canUndo: history.canUndo,
       canRedo: history.canRedo,
+      bytes: history.bytes,
       history: history.size,
     };
 
@@ -43,7 +70,13 @@ function makeCanvas() {
     window.dispatchEvent(new CustomEvent("canvasstatechange", { detail }));
   }
 
+  const reportedErrors = new WeakSet();
+
   function reportError(error) {
+    if (error && typeof error === "object") {
+      if (reportedErrors.has(error)) return;
+      reportedErrors.add(error);
+    }
     console.error(error);
     window.dispatchEvent(
       new CustomEvent("canvaserror", {
@@ -57,16 +90,24 @@ function makeCanvas() {
     emitState();
 
     const result = operationQueue.then(operation);
-    operationQueue = result
-      .catch((error) => {
+    const settled = result.then(
+      (value) => value,
+      (error) => {
         reportError(error);
-      })
-      .finally(() => {
+        throw error;
+      }
+    );
+    operationQueue = settled.then(
+      () => {
         pendingOperations -= 1;
         emitState();
-      });
-
-    return result;
+      },
+      () => {
+        pendingOperations -= 1;
+        emitState();
+      }
+    );
+    return settled;
   }
 
   function setSize({ width, height }) {
@@ -93,422 +134,511 @@ function makeCanvas() {
     return { scratch, scratchContext };
   }
 
-  async function commitFromSource(source, { resetHistory = false, paint } = {}) {
-    let bitmap;
+  function blit(snapshot) {
+    setSize(snapshot);
+    context.clearRect(0, 0, canvasEl.width, canvasEl.height);
+    context.drawImage(snapshot, 0, 0);
+    clearOverlay();
+    canvasStack.hidden = false;
+  }
+
+  function paintOver(draw) {
+    const { scratch, scratchContext } = createScratchCanvas(canvasEl.width, canvasEl.height);
+    scratchContext.drawImage(canvasEl, 0, 0);
+    draw(scratchContext);
+    return { source: scratch };
+  }
+
+  async function commit(plan, invocation) {
+    const snapshot = await createImageBitmap(plan.source);
     try {
-      bitmap = await createImageBitmap(source);
+      blit(snapshot);
     } catch (error) {
-      reportError(error);
+      snapshot.close?.();
+      if (history.present) blit(history.present.snapshot);
       throw error;
     }
 
-    paint?.(bitmap);
-
-    return enqueue(() => {
-      if (resetHistory) history.reset(bitmap);
-      else history.add(bitmap);
-      emitState();
-      return true;
+    const entry = {
+      name: invocation.name,
+      label: invocation.label,
+      params: invocation.params,
+      snapshot,
+    };
+    if (invocation.historyMode === "reset") history.reset(entry);
+    else history.add(entry);
+    emitState();
+    return Object.freeze({
+      name: invocation.name,
+      label: invocation.label,
+      params: invocation.params,
+      info: Object.freeze(plan.info ?? {}),
     });
   }
 
-  async function replaceWithScratch(scratch, resetHistory = false) {
-    await commitFromSource(scratch, {
-      resetHistory,
-      paint: () => {
-        setSize({ width: scratch.width, height: scratch.height });
-        context.clearRect(0, 0, scratch.width, scratch.height);
-        context.drawImage(scratch, 0, 0);
-        hasContent = true;
-        canvasStack.hidden = false;
+  function publicView(entry) {
+    if (!entry) return null;
+    return Object.freeze({
+      name: entry.name,
+      label: entry.label,
+      params: entry.params,
+    });
+  }
+
+  function run(name, rawParams = {}) {
+    cancelOpenGesture();
+    let descriptor;
+    try {
+      descriptor = registry.catalog.get(name);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    if (pendingOperations > 0) {
+      return Promise.reject(
+        new CommandError("busy", `Cannot run ${name} while the canvas is busy.`)
+      );
+    }
+    if (descriptor.historyMode === "reset") {
+      return Promise.reject(
+        new CommandError("invalid", `${name} is not available through run.`)
+      );
+    }
+    if (history.present === null) {
+      return Promise.reject(new CommandError("empty", "Load an image first."));
+    }
+
+    let invocation;
+    try {
+      invocation = registry.dispatch(name, rawParams, readDoc());
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    return enqueue(async () => commit(await invocation.plan, invocation));
+  }
+
+  function load(source, { label } = {}) {
+    cancelOpenGesture();
+    const width = source.naturalWidth || source.width;
+    const height = source.naturalHeight || source.height;
+    if (!width || !height) throw new Error("The image has invalid dimensions.");
+    if (pendingOperations > 0) {
+      throw new CommandError("busy", "Cannot load an image while the canvas is busy.");
+    }
+
+    const descriptor = registry.catalog.get("image.load");
+    const { scratch, scratchContext } = createScratchCanvas(width, height, true);
+    scratchContext.drawImage(source, 0, 0, width, height);
+    try {
+      scratchContext.getImageData(0, 0, 1, 1);
+    } catch {
+      throw new Error(
+        "This image cannot be edited because its source blocks canvas access."
+      );
+    }
+
+    return enqueue(() =>
+      commit(
+        { source: scratch },
+        {
+          name: descriptor.name,
+          label: label || descriptor.label,
+          params: { width, height },
+          historyMode: descriptor.historyMode,
+        }
+      )
+    );
+  }
+
+  function undo() {
+    cancelOpenGesture();
+    if (pendingOperations > 0 || !history.canUndo) return Promise.resolve(null);
+    return enqueue(() => {
+      const moved = history.undo();
+      if (!moved) return null;
+      blit(moved.present.snapshot);
+      emitState();
+      return publicView(moved.undone);
+    });
+  }
+
+  function redo() {
+    cancelOpenGesture();
+    if (pendingOperations > 0 || !history.canRedo) return Promise.resolve(null);
+    return enqueue(() => {
+      const moved = history.redo();
+      if (!moved) return null;
+      blit(moved.present.snapshot);
+      emitState();
+      return publicView(moved.redone);
+    });
+  }
+
+  registry.define({
+    name: "image.load",
+    label: "Load",
+    historyMode: "reset",
+    params: {
+      width: { type: "integer", min: 1 },
+      height: { type: "integer", min: 1 },
+    },
+    execute() {
+      throw new CommandError(
+        "invalid",
+        "image.load requires a decoded image. Use the load control."
+      );
+    },
+  });
+
+  for (const [key, filter] of Object.entries(filters)) {
+    registry.define({
+      name: `filter.${key}`,
+      label: FILTER_LABELS[key],
+      historyMode: "add",
+      params: {},
+      execute() {
+        const { width, height } = canvasEl;
+        let scratch;
+        let accelerated = false;
+
+        if (filter.canvasFilter) {
+          const acceleratedSurface = createScratchCanvas(width, height);
+          if (enableCanvasFilter(acceleratedSurface.scratchContext, filter.canvasFilter)) {
+            acceleratedSurface.scratchContext.drawImage(canvasEl, 0, 0);
+            acceleratedSurface.scratchContext.filter = "none";
+            scratch = acceleratedSurface.scratch;
+            accelerated = true;
+          }
+        }
+
+        if (!scratch) {
+          const fallbackSurface = createScratchCanvas(width, height, true);
+          fallbackSurface.scratchContext.drawImage(canvasEl, 0, 0);
+          const imageData = fallbackSurface.scratchContext.getImageData(0, 0, width, height);
+          filter.transform(imageData.data);
+          fallbackSurface.scratchContext.putImageData(imageData, 0, 0);
+          scratch = fallbackSurface.scratch;
+        }
+
+        return { source: scratch, info: { accelerated } };
       },
     });
   }
 
-  function restoreSnapshot(snapshot) {
-    setSize({ width: snapshot.width, height: snapshot.height });
-    context.clearRect(0, 0, canvasEl.width, canvasEl.height);
-    context.drawImage(snapshot, 0, 0);
-    clearOverlay();
-  }
-
-  async function finishPointerSession(callbacks, session, cancelled) {
-    if (cancelled) {
-      callbacks.oncancel?.({ start: session.start, point: session.latest });
-      clearOverlay();
-      return;
-    }
-
-    const shouldCommit = await callbacks.onmouseup?.({
-      start: session.start,
-      point: session.latest,
-      context: overlayContext,
-    });
-
-    if (callbacks.commitOverlay !== false && shouldCommit !== false) {
-      const { scratch, scratchContext } = createScratchCanvas(
-        canvasEl.width,
-        canvasEl.height
-      );
-      scratchContext.drawImage(canvasEl, 0, 0);
-      scratchContext.drawImage(overlayEl, 0, 0);
-      try {
-        await commitFromSource(scratch, {
-          paint: () => {
-            context.clearRect(0, 0, canvasEl.width, canvasEl.height);
-            context.drawImage(scratch, 0, 0);
-            clearOverlay();
-          },
-        });
-      } catch {
-        clearOverlay();
-      }
-    } else {
-      clearOverlay();
-    }
-  }
-
-  return {
-    isEmpty() {
-      return !hasContent;
+  registry.define({
+    name: "image.resize",
+    label: "Resize",
+    historyMode: "add",
+    params: {
+      width: { type: "integer", min: 1 },
+      height: { type: "integer", min: 1 },
     },
-
-    isBusy() {
-      return pendingOperations > 0;
-    },
-
-    getHistoryState() {
-      return {
-        ...history.size,
-        canUndo: history.canUndo,
-        canRedo: history.canRedo,
-        busy: pendingOperations > 0,
-      };
-    },
-
-    getPosition() {
-      const box = canvasEl.getBoundingClientRect();
-      return {
-        top: box.top + window.scrollY,
-        left: box.left + window.scrollX,
-      };
-    },
-
-    getSize() {
-      return {
-        width: canvasEl.width,
-        height: canvasEl.height,
-      };
-    },
-
-    resize(size) {
-      setSize(size);
-    },
-
-    draw(drawOperation) {
-      const width = canvasEl.width;
-      const height = canvasEl.height;
-      const { scratch, scratchContext } = createScratchCanvas(width, height);
-      if (hasContent) scratchContext.drawImage(canvasEl, 0, 0);
-      drawOperation(scratchContext);
-      return commitFromSource(scratch, {
-        paint: () => {
-          setSize({ width, height });
-          context.clearRect(0, 0, width, height);
-          context.drawImage(scratch, 0, 0);
-          hasContent = true;
-          canvasStack.hidden = false;
-        },
-      });
-    },
-
-    drawWithoutCommit(drawOperation) {
-      drawOperation(context);
-    },
-
-    async commitDraw() {
-      try {
-        await commitFromSource(canvasEl, {
-          paint: () => {
-            hasContent = true;
-            canvasStack.hidden = false;
-          },
-        });
-        return true;
-      } catch (error) {
-        if (history.present) restoreSnapshot(history.present);
-        else {
-          context.clearRect(0, 0, canvasEl.width, canvasEl.height);
-          hasContent = false;
-          clearOverlay();
-        }
-        throw error;
-      }
-    },
-
-    async loadImage(image) {
-      const width = image.naturalWidth || image.width;
-      const height = image.naturalHeight || image.height;
-      if (!width || !height) throw new Error("The image has invalid dimensions.");
-
-      const { scratch, scratchContext } = createScratchCanvas(width, height, true);
-      scratchContext.drawImage(image, 0, 0, width, height);
-      try {
-        scratchContext.getImageData(0, 0, 1, 1);
-      } catch {
-        throw new Error(
-          "This image cannot be edited because its source blocks canvas access."
-        );
-      }
-
-      await replaceWithScratch(scratch, true);
-    },
-
-    drawImage(image, size = {}) {
-      const width = size.width || image.width || image.naturalWidth;
-      const height = size.height || image.height || image.naturalHeight;
-      const { scratch, scratchContext } = createScratchCanvas(width, height);
-      scratchContext.drawImage(image, 0, 0, width, height);
-      return commitFromSource(scratch, {
-        resetHistory: history.present === null,
-        paint: () => {
-          setSize({ width, height });
-          context.clearRect(0, 0, width, height);
-          context.drawImage(scratch, 0, 0);
-          hasContent = true;
-          canvasStack.hidden = false;
-        },
-      });
-    },
-
-    crop(start, end) {
-      const bounds = normalizeRect(start, end);
-      const width = Math.round(bounds.width);
-      const height = Math.round(bounds.height);
-      if (!width || !height) return Promise.resolve(false);
-
-      const { scratch, scratchContext } = createScratchCanvas(width, height);
-      scratchContext.drawImage(
-        canvasEl,
-        bounds.x,
-        bounds.y,
-        bounds.width,
-        bounds.height,
-        0,
-        0,
-        width,
-        height
-      );
-
-      return commitFromSource(scratch, {
-        paint: () => {
-          setSize({ width, height });
-          context.clearRect(0, 0, width, height);
-          context.drawImage(scratch, 0, 0);
-        },
-      });
-    },
-
-    async resizeImage(size) {
-      const width = Math.round(Number(size.width));
-      const height = Math.round(Number(size.height));
-      if (!hasContent || width <= 0 || height <= 0) {
-        throw new Error("Enter positive width and height values.");
-      }
-
+    execute({ width, height }) {
       const { scratch, scratchContext } = createScratchCanvas(width, height);
       scratchContext.imageSmoothingEnabled = true;
       scratchContext.imageSmoothingQuality = "high";
       scratchContext.drawImage(canvasEl, 0, 0, width, height);
-      await replaceWithScratch(scratch);
+      return { source: scratch };
     },
+  });
 
-    async applyFilter(filter) {
-      if (!hasContent) return { accelerated: false, applied: false };
+  function clipRect(rect, bounds) {
+    const x = Math.max(0, rect.x);
+    const y = Math.max(0, rect.y);
+    const right = Math.min(bounds.width, rect.x + rect.width);
+    const bottom = Math.min(bounds.height, rect.y + rect.height);
+    return { x, y, width: right - x, height: bottom - y };
+  }
 
-      const { width, height } = this.getSize();
-      let scratch;
-      let accelerated = false;
+  function roundRect(rect) {
+    const x = Math.round(rect.x);
+    const y = Math.round(rect.y);
+    const right = Math.round(rect.x + rect.width);
+    const bottom = Math.round(rect.y + rect.height);
+    return { x, y, width: right - x, height: bottom - y };
+  }
 
-      if (filter.canvasFilter) {
-        const acceleratedSurface = createScratchCanvas(width, height);
-        if (
-          enableCanvasFilter(
-            acceleratedSurface.scratchContext,
-            filter.canvasFilter
-          )
-        ) {
-          acceleratedSurface.scratchContext.drawImage(canvasEl, 0, 0);
-          acceleratedSurface.scratchContext.filter = "none";
-          scratch = acceleratedSurface.scratch;
-          accelerated = true;
+  registry.define({
+    name: "image.crop",
+    label: "Crop",
+    historyMode: "add",
+    params: {
+      x: { type: "integer" },
+      y: { type: "integer" },
+      width: { type: "integer", min: 1 },
+      height: { type: "integer", min: 1 },
+    },
+    validate(params, context) {
+      const clipped = clipRect(params, context);
+      if (clipped.width < 1 || clipped.height < 1) return "crop area is empty";
+    },
+    execute(params, context) {
+      const clipped = clipRect(params, context);
+      const { scratch, scratchContext } = createScratchCanvas(clipped.width, clipped.height);
+      scratchContext.drawImage(
+        canvasEl,
+        clipped.x,
+        clipped.y,
+        clipped.width,
+        clipped.height,
+        0,
+        0,
+        clipped.width,
+        clipped.height
+      );
+      return { source: scratch };
+    },
+  });
+
+  function strokeSegment(ctx, x1, y1, x2, y2) {
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+  }
+
+  const drawTools = {
+    "draw.line": {
+      label: "Line",
+      params: { x1: NUMBER_PARAM, y1: NUMBER_PARAM, x2: NUMBER_PARAM, y2: NUMBER_PARAM },
+      validate: (params) =>
+        params.x1 === params.x2 && params.y1 === params.y2 ? "line has zero length" : undefined,
+      render(ctx, { x1, y1, x2, y2 }) {
+        strokeSegment(ctx, x1, y1, x2, y2);
+      },
+      paramsFrom: ({ start, latest }) => ({
+        x1: start.x,
+        y1: start.y,
+        x2: latest.x,
+        y2: latest.y,
+      }),
+    },
+    "draw.rect": {
+      label: "Rectangle",
+      params: { x: NUMBER_PARAM, y: NUMBER_PARAM, width: POSITIVE_PARAM, height: POSITIVE_PARAM },
+      render(ctx, { x, y, width, height }) {
+        ctx.strokeRect(x, y, width, height);
+      },
+      paramsFrom: ({ start, latest }) => normalizeRect(start, latest),
+    },
+    "draw.ellipse": {
+      label: "Ellipse",
+      params: { cx: NUMBER_PARAM, cy: NUMBER_PARAM, rx: POSITIVE_PARAM, ry: POSITIVE_PARAM },
+      render(ctx, { cx, cy, rx, ry }) {
+        if (!(rx > 0) || !(ry > 0)) return;
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+        ctx.stroke();
+      },
+      paramsFrom: ({ start, latest }) => ({
+        cx: (start.x + latest.x) / 2,
+        cy: (start.y + latest.y) / 2,
+        rx: Math.abs(latest.x - start.x) / 2,
+        ry: Math.abs(latest.y - start.y) / 2,
+      }),
+    },
+    "draw.pen": {
+      label: "Pen",
+      params: { points: { type: "points", minLength: 2 } },
+      validate(params) {
+        const { points } = params;
+        for (let index = 1; index < points.length; index += 1) {
+          const previous = points[index - 1];
+          const point = points[index];
+          if (previous.x !== point.x || previous.y !== point.y) return;
+        }
+        return "pen stroke is empty";
+      },
+      render(ctx, { points }) {
+        for (let index = 1; index < points.length; index += 1) {
+          const previous = points[index - 1];
+          const point = points[index];
+          if (previous.x === point.x && previous.y === point.y) continue;
+          strokeSegment(ctx, previous.x, previous.y, point.x, point.y);
+        }
+      },
+      paramsFrom: ({ allPoints }) => ({ points: allPoints }),
+      previewAppends: true,
+    },
+  };
+
+  for (const [name, tool] of Object.entries(drawTools)) {
+    registry.define({
+      name,
+      label: tool.label,
+      historyMode: "add",
+      params: tool.params,
+      validate: tool.validate,
+      execute: (params) => paintOver((ctx) => tool.render(ctx, params)),
+    });
+  }
+
+  const pointerTools = {};
+  for (const [name, tool] of Object.entries(drawTools)) {
+    pointerTools[name] = {
+      paramsFrom: tool.paramsFrom,
+      preview: tool.render,
+      previewAppends: tool.previewAppends,
+    };
+  }
+  pointerTools["image.crop"] = {
+    paramsFrom: ({ start, latest }) => roundRect(normalizeRect(start, latest)),
+    preview(ctx, { x, y, width, height }) {
+      ctx.strokeRect(x, y, width, height);
+    },
+  };
+
+  function renderGestureFrame(tool, session) {
+    if (session.framePoints.length === 0) return;
+    const framePoints = session.framePoints.splice(0);
+    const previous = session.latest;
+    session.latest = framePoints[framePoints.length - 1];
+    session.allPoints.push(...framePoints);
+    if (!tool.previewAppends) clearOverlay();
+    const previewParams = tool.previewAppends
+      ? { points: [previous, ...framePoints] }
+      : tool.paramsFrom(session);
+    tool.preview(overlayContext, previewParams);
+  }
+
+  function armTool(name) {
+    const tool = pointerTools[name];
+    if (!tool) throw new CommandError("unknown", `No pointer tool "${name}".`);
+    disarmTool();
+    clearOverlay();
+
+    const scheduler = createFrameScheduler(
+      window.requestAnimationFrame.bind(window),
+      window.cancelAnimationFrame.bind(window)
+    );
+    let session = null;
+    let finishing = false;
+
+    const pointFromEvent = (event) =>
+      mapPointToCanvas(
+        event.clientX,
+        event.clientY,
+        overlayEl.getBoundingClientRect(),
+        overlayEl.width,
+        overlayEl.height
+      );
+
+    const endOpenGesture = (pointerId) => {
+      scheduler.cancel();
+      if (pointerId != null) {
+        try {
+          overlayEl.releasePointerCapture?.(pointerId);
+        } catch {
+          // Capture may already be released.
         }
       }
+      session = null;
+      finishing = false;
+      clearOverlay();
+    };
 
-      if (!scratch) {
-        const fallbackSurface = createScratchCanvas(width, height, true);
-        fallbackSurface.scratchContext.drawImage(canvasEl, 0, 0);
-        const imageData = fallbackSurface.scratchContext.getImageData(
-          0,
-          0,
-          width,
-          height
-        );
-        filter.transform(imageData.data);
-        fallbackSurface.scratchContext.putImageData(imageData, 0, 0);
-        scratch = fallbackSurface.scratch;
+    const cancelSession = () => {
+      if (!session || finishing) return;
+      const pointerId = session.pointerId;
+      finishing = true;
+      endOpenGesture(pointerId);
+    };
+
+    cancelOpenGesture = () => {
+      if (!session || finishing) return;
+      const pointerId = session.pointerId;
+      finishing = true;
+      endOpenGesture(pointerId);
+    };
+
+    overlayEl.onpointerdown = (event) => {
+      if (
+        session ||
+        finishing ||
+        pendingOperations > 0 ||
+        history.present === null ||
+        event.isPrimary === false ||
+        (event.pointerType === "mouse" && event.button !== 0)
+      ) {
+        return;
       }
 
-      await replaceWithScratch(scratch);
-      return { accelerated, applied: true };
-    },
+      event.preventDefault();
+      clearOverlay();
+      const point = pointFromEvent(event);
+      session = {
+        pointerId: event.pointerId,
+        start: point,
+        latest: point,
+        framePoints: [],
+        allPoints: [point],
+      };
+      overlayEl.setPointerCapture?.(event.pointerId);
+    };
 
+    overlayEl.onpointermove = (event) => {
+      if (!session || event.pointerId !== session.pointerId) return;
+      event.preventDefault();
+      const events = event.getCoalescedEvents?.() || [event];
+      const points = events.length ? events.map(pointFromEvent) : [pointFromEvent(event)];
+      session.framePoints.push(...points);
+      scheduler.schedule(() => {
+        if (session) renderGestureFrame(tool, session);
+      });
+    };
+
+    overlayEl.onpointerup = async (event) => {
+      if (!session || event.pointerId !== session.pointerId || finishing) return;
+      event.preventDefault();
+      finishing = true;
+      session.framePoints.push(pointFromEvent(event));
+      scheduler.flush();
+      if (session.framePoints.length) renderGestureFrame(tool, session);
+      const current = session;
+      session = null;
+      overlayEl.releasePointerCapture?.(event.pointerId);
+      try {
+        await run(name, tool.paramsFrom(current));
+      } catch (error) {
+        clearOverlay();
+        if (error?.code !== "invalid") reportError(error);
+      } finally {
+        finishing = false;
+      }
+    };
+
+    overlayEl.onpointercancel = cancelSession;
+    overlayEl.onlostpointercapture = cancelSession;
+
+    disarmTool = () => {
+      cancelOpenGesture();
+      cancelOpenGesture = () => {};
+      scheduler.cancel();
+      clearOverlay();
+      session = null;
+      finishing = false;
+      overlayEl.onpointerdown = null;
+      overlayEl.onpointermove = null;
+      overlayEl.onpointerup = null;
+      overlayEl.onpointercancel = null;
+      overlayEl.onlostpointercapture = null;
+    };
+  }
+
+  return Object.freeze({
+    run,
+    undo,
+    redo,
+    load,
+    armTool,
+    commands: registry.catalog,
+    get doc() {
+      return readDoc();
+    },
     toBlob() {
-      if (!hasContent) return Promise.resolve(null);
+      if (!history.present) return Promise.resolve(null);
       return canvasToBlob(canvasEl);
     },
-
-    performWhilePointerDown(action) {
-      removePointerTool();
-      clearOverlay();
-
-      const callbacks = action();
-      const scheduler = createFrameScheduler(
-        window.requestAnimationFrame.bind(window),
-        window.cancelAnimationFrame.bind(window)
-      );
-      let session = null;
-      let finishing = false;
-
-      const pointFromEvent = (event) =>
-        mapPointToCanvas(
-          event.clientX,
-          event.clientY,
-          overlayEl.getBoundingClientRect(),
-          overlayEl.width,
-          overlayEl.height
-        );
-
-      const renderFrame = () => {
-        if (!session || session.points.length === 0) return;
-        const points = session.points.splice(0);
-        session.latest = points[points.length - 1];
-        if (callbacks.clearEachFrame !== false) clearOverlay();
-        callbacks.onmousemove?.({
-          start: session.start,
-          point: session.latest,
-          points,
-          context: overlayContext,
-        });
-      };
-
-      const cancelSession = async () => {
-        if (!session || finishing) return;
-        finishing = true;
-        scheduler.cancel();
-        const current = session;
-        session = null;
-        await finishPointerSession(callbacks, current, true);
-        finishing = false;
-      };
-
-      overlayEl.onpointerdown = (event) => {
-        if (
-          session ||
-          finishing ||
-          pendingOperations > 0 ||
-          !hasContent ||
-          event.isPrimary === false ||
-          (event.pointerType === "mouse" && event.button !== 0)
-        ) {
-          return;
-        }
-
-        event.preventDefault();
-        clearOverlay();
-        const point = pointFromEvent(event);
-        session = {
-          pointerId: event.pointerId,
-          start: point,
-          latest: point,
-          points: [],
-        };
-        overlayEl.setPointerCapture?.(event.pointerId);
-        callbacks.onmousedown?.({ point, context: overlayContext });
-      };
-
-      overlayEl.onpointermove = (event) => {
-        if (!session || event.pointerId !== session.pointerId) return;
-        event.preventDefault();
-        const events = event.getCoalescedEvents?.() || [event];
-        const points = events.length ? events.map(pointFromEvent) : [pointFromEvent(event)];
-        session.points.push(...points);
-        scheduler.schedule(renderFrame);
-      };
-
-      overlayEl.onpointerup = async (event) => {
-        if (!session || event.pointerId !== session.pointerId || finishing) return;
-        event.preventDefault();
-        finishing = true;
-        session.points.push(pointFromEvent(event));
-        scheduler.flush();
-        const current = session;
-        session = null;
-        overlayEl.releasePointerCapture?.(event.pointerId);
-        try {
-          await finishPointerSession(callbacks, current, false);
-        } finally {
-          finishing = false;
-        }
-      };
-
-      overlayEl.onpointercancel = cancelSession;
-      overlayEl.onlostpointercapture = cancelSession;
-
-      removePointerTool = () => {
-        scheduler.cancel();
-        clearOverlay();
-        session = null;
-        overlayEl.onpointerdown = null;
-        overlayEl.onpointermove = null;
-        overlayEl.onpointerup = null;
-        overlayEl.onpointercancel = null;
-        overlayEl.onlostpointercapture = null;
-      };
-    },
-
-    applyPixelTransformation(pixelTransformation) {
-      return this.draw((drawingContext) => {
-        const { width, height } = this.getSize();
-        const imgData = drawingContext.getImageData(0, 0, width, height);
-        pixelTransformation(imgData.data);
-        drawingContext.putImageData(imgData, 0, 0);
-      });
-    },
-
-    undo() {
-      if (pendingOperations > 0 || !history.canUndo) return Promise.resolve(false);
-      return enqueue(() => {
-        const snapshot = history.undo();
-        if (!snapshot) return false;
-        restoreSnapshot(snapshot);
-        emitState();
-        return true;
-      });
-    },
-
-    redo() {
-      if (pendingOperations > 0 || !history.canRedo) return Promise.resolve(false);
-      return enqueue(() => {
-        const snapshot = history.redo();
-        if (!snapshot) return false;
-        restoreSnapshot(snapshot);
-        emitState();
-        return true;
-      });
-    },
-
-  };
+  });
 }
 
 export const canvas = makeCanvas();
