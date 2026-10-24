@@ -8,7 +8,6 @@ import {
   scaleDimension,
   validateDimensions,
 } from "./image-utils.js";
-import { filters } from "./processing-utils.js";
 
 const controls = document.getElementById("controls");
 const dragAndDropZone = document.getElementById("dragAndDropZone");
@@ -27,7 +26,7 @@ function closeContainingMenu(element) {
 
 async function installDecodedImage(decoded, label) {
   try {
-    await canvas.loadImage(decoded.source);
+    await canvas.load(decoded.source, { label: `Load ${label}` });
     dragHelper.classList.add("invisible");
     controls.disabled = false;
     setStatus(`${label} is ready to edit.`);
@@ -86,109 +85,21 @@ fileInput.addEventListener("change", () => {
   fileInput.value = "";
 });
 
-document.getElementById("ellipseDraw").addEventListener("click", (event) => {
-  closeContainingMenu(event.currentTarget);
-  setStatus("Ellipse tool selected.");
-  canvas.performWhilePointerDown(() => {
-    let moved = false;
-    return {
-      onmousemove: ({ start, point, context }) => {
-        const radiusX = Math.abs(point.x - start.x) / 2;
-        const radiusY = Math.abs(point.y - start.y) / 2;
-        moved = radiusX > 0 && radiusY > 0;
-        if (!moved) return;
-        context.beginPath();
-        context.ellipse(
-          (start.x + point.x) / 2,
-          (start.y + point.y) / 2,
-          radiusX,
-          radiusY,
-          0,
-          0,
-          Math.PI * 2
-        );
-        context.stroke();
-      },
-      onmouseup: () => moved,
-    };
-  });
-});
+const toolButtons = {
+  penDraw: "draw.pen",
+  lineDraw: "draw.line",
+  rectangleDraw: "draw.rect",
+  ellipseDraw: "draw.ellipse",
+  cropButton: "image.crop",
+};
 
-document.getElementById("rectangleDraw").addEventListener("click", (event) => {
-  closeContainingMenu(event.currentTarget);
-  setStatus("Rectangle tool selected.");
-  canvas.performWhilePointerDown(() => {
-    let moved = false;
-    return {
-      onmousemove: ({ start, point, context }) => {
-        const width = point.x - start.x;
-        const height = point.y - start.y;
-        moved = width !== 0 && height !== 0;
-        if (moved) context.strokeRect(start.x, start.y, width, height);
-      },
-      onmouseup: () => moved,
-    };
+for (const [id, name] of Object.entries(toolButtons)) {
+  document.getElementById(id).addEventListener("click", (event) => {
+    closeContainingMenu(event.currentTarget);
+    setStatus(`${canvas.commands.get(name).label} tool selected.`);
+    canvas.armTool(name);
   });
-});
-
-document.getElementById("penDraw").addEventListener("click", (event) => {
-  closeContainingMenu(event.currentTarget);
-  setStatus("Pen tool selected.");
-  canvas.performWhilePointerDown(() => {
-    let lastPoint;
-    let moved = false;
-    return {
-      clearEachFrame: false,
-      onmousedown: ({ point }) => {
-        lastPoint = point;
-      },
-      onmousemove: ({ points, context }) => {
-        for (const point of points) {
-          if (point.x === lastPoint.x && point.y === lastPoint.y) continue;
-          context.beginPath();
-          context.moveTo(lastPoint.x, lastPoint.y);
-          context.lineTo(point.x, point.y);
-          context.stroke();
-          lastPoint = point;
-          moved = true;
-        }
-      },
-      onmouseup: () => moved,
-    };
-  });
-});
-
-document.getElementById("lineDraw").addEventListener("click", (event) => {
-  closeContainingMenu(event.currentTarget);
-  setStatus("Line tool selected.");
-  canvas.performWhilePointerDown(() => {
-    let moved = false;
-    return {
-      onmousemove: ({ start, point, context }) => {
-        moved = point.x !== start.x || point.y !== start.y;
-        if (!moved) return;
-        context.beginPath();
-        context.moveTo(start.x, start.y);
-        context.lineTo(point.x, point.y);
-        context.stroke();
-      },
-      onmouseup: () => moved,
-    };
-  });
-});
-
-document.getElementById("cropButton").addEventListener("click", () => {
-  setStatus("Crop tool selected.");
-  canvas.performWhilePointerDown(() => ({
-    commitOverlay: false,
-    onmousemove: ({ start, point, context }) => {
-      const width = point.x - start.x;
-      const height = point.y - start.y;
-      if (width && height) context.strokeRect(start.x, start.y, width, height);
-    },
-    onmouseup: ({ start, point }) => canvas.crop(start, point),
-  }));
-});
+}
 
 const resolutionDialog = document.getElementById("resolutionDialog");
 const resolutionForm = document.getElementById("resolutionForm");
@@ -201,7 +112,7 @@ let resizeRatio = 1;
 let syncingDimensions = false;
 
 function openResizeDialog() {
-  const size = canvas.getSize();
+  const size = canvas.doc;
   widthInput.value = size.width;
   heightInput.value = size.height;
   resizeRatio = size.width / size.height;
@@ -253,7 +164,7 @@ resolutionForm.addEventListener("submit", async (event) => {
   saveResolution.disabled = true;
   resizeError.textContent = "";
   try {
-    await canvas.resizeImage(dimensions);
+    await canvas.run("image.resize", dimensions);
     resolutionDialog.close();
     setStatus(`Resized to ${dimensions.width} × ${dimensions.height}.`);
   } catch (error) {
@@ -263,17 +174,18 @@ resolutionForm.addEventListener("submit", async (event) => {
   }
 });
 
-for (const [name, filter] of Object.entries(filters)) {
-  document.getElementById(name).addEventListener("click", async (event) => {
+for (const descriptor of canvas.commands.list()) {
+  if (!descriptor.name.startsWith("filter.")) continue;
+  const id = descriptor.name.slice("filter.".length);
+  document.getElementById(id).addEventListener("click", async (event) => {
     closeContainingMenu(event.currentTarget);
-    const label = event.currentTarget.textContent.trim();
-    setStatus(`Applying ${label.toLowerCase()}…`);
+    setStatus(`Applying ${descriptor.label.toLowerCase()}…`);
     const started = performance.now();
     try {
-      const result = await canvas.applyFilter(filter);
+      const result = await canvas.run(descriptor.name);
       const duration = Math.round((performance.now() - started) * 10) / 10;
       setStatus(
-        `${label} applied in ${duration} ms${result.accelerated ? " using the canvas filter path" : ""}.`
+        `${result.label} applied in ${duration} ms${result.info.accelerated ? " using the canvas filter path" : ""}.`
       );
     } catch (error) {
       setStatus(error.message, true);
@@ -285,7 +197,7 @@ document.getElementById("redoButton").addEventListener("click", () => canvas.red
 document.getElementById("undoButton").addEventListener("click", () => canvas.undo());
 
 document.getElementById("downloadButton").addEventListener("click", async () => {
-  if (canvas.isEmpty()) return;
+  if (!canvas.doc.hasContent) return;
   setStatus("Preparing PNG…");
   try {
     const blob = await canvas.toBlob();

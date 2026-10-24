@@ -12,9 +12,9 @@
 
 ## 3. Session adapter
 
-- [ ] 3.1 Register load, crop, resize, filter, and draw commands in `canvas.js`. Route commits through `run` and `commit`, and read `historyMode` from the spec. Verify a second `run` started in the same turn is rejected as busy.
-- [ ] 3.2 Commit pointer tools from one `drawTools` table on pointer-up, and clip crop rectangles to the image. Verify a zero-area gesture adds no history entry.
-- [ ] 3.3 Delete the old canvas mutators and point `index.js` at `run`, `load`, `armTool`, and `doc`. Verify `npm test` and `npm run build` succeed.
+- [x] 3.1 Register load, crop, resize, filter, and draw commands in `canvas.js`. Route commits through `run` and `commit`, and read `historyMode` from the spec. Verify a second `run` started in the same turn is rejected as busy.
+- [x] 3.2 Commit pointer tools from one `drawTools` table on pointer-up, and clip crop rectangles to the image. Verify a zero-area gesture adds no history entry.
+- [x] 3.3 Delete the old canvas mutators and point `index.js` at `run`, `load`, `armTool`, and `doc`. Verify `npm test` and `npm run build` succeed.
 
 ## 4. Page facade
 
