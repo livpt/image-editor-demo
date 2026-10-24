@@ -828,7 +828,12 @@ function makeCanvas() {
     },
     toBlob() {
       if (!history.present) return Promise.resolve(null);
-      return canvasToBlob(canvasEl);
+      // run() restores the committed composite before freezeDocument blits the
+      // update. Snapshot only after that paint, so a save during an opacity
+      // preview exports the value on screen.
+      const snapshotWhenSettled = () =>
+        pendingOperations > 0 ? operationQueue.then(snapshotWhenSettled) : canvasToBlob(canvasEl);
+      return operationQueue.then(snapshotWhenSettled);
     },
   });
 }
