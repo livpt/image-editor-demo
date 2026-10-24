@@ -18,10 +18,54 @@ test("only canvas.js imports the history store", () => {
   assert.deepEqual(importers, ["canvas.js"]);
 });
 
-test("the page does not import the registry or the history store", () => {
+test("only canvas.js imports the layer engine", () => {
+  const importers = readdirSync(root)
+    .filter((name) => name.endsWith(".js"))
+    .filter((name) => /from\s+["']\.\/layers\.js["']/.test(read(name)));
+  assert.deepEqual(importers, ["canvas.js"]);
+});
+
+test("the page does not import the registry, the history store, or the layer engine", () => {
   const index = read("index.js");
   assert.doesNotMatch(index, /from\s+["']\.\/commands\.js["']/);
   assert.doesNotMatch(index, /from\s+["']\.\/history-store\.js["']/);
+  assert.doesNotMatch(index, /from\s+["']\.\/layers\.js["']/);
+});
+
+test("the layers panel wires its controls to the layer commands", () => {
+  const html = read("index.html");
+  const index = read("index.js");
+  const canvasSource = read("canvas.js");
+
+  assert.match(html, /<aside id="layersPanel"/);
+  for (const id of [
+    "layersControls",
+    "layersList",
+    "layerAdd",
+    "layerGroup",
+    "layerDuplicate",
+    "layerDelete",
+    "layerOpacity",
+    "layerBlend",
+  ]) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+  for (const name of [
+    "layer.add",
+    "layer.group",
+    "layer.delete",
+    "layer.rename",
+    "layer.duplicate",
+    "layer.reorder",
+    "layer.visibility",
+    "layer.opacity",
+    "layer.blend",
+  ]) {
+    assert.match(index, new RegExp(`"${name.replace(".", "\\.")}"`));
+    assert.match(canvasSource, new RegExp(`"${name.replace(".", "\\.")}"`));
+  }
+  assert.match(index, /activate:\s*canvas\.activate/);
+  assert.match(index, /canvas\.previewOpacity\(/);
 });
 
 test("filter and tool buttons match registered command names", () => {
