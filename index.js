@@ -193,8 +193,69 @@ for (const descriptor of canvas.commands.list()) {
   });
 }
 
-document.getElementById("redoButton").addEventListener("click", () => canvas.redo());
-document.getElementById("undoButton").addEventListener("click", () => canvas.undo());
+function announce(action, verb) {
+  return async () => {
+    const entry = await action();
+    if (entry) setStatus(`${verb} ${entry.label.toLowerCase()}.`);
+  };
+}
+
+const undoEdit = announce(canvas.undo, "Undid");
+const redoEdit = announce(canvas.redo, "Redid");
+
+document.getElementById("undoButton").addEventListener("click", undoEdit);
+document.getElementById("redoButton").addEventListener("click", redoEdit);
+
+const shortcuts = [
+  { key: "z", shift: false, action: undoEdit },
+  { key: "z", shift: true, action: redoEdit },
+  { key: "y", shift: false, action: redoEdit },
+];
+
+function isEditableTarget(target) {
+  if (!(target instanceof HTMLElement)) return false;
+  return target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
+}
+
+window.addEventListener("keydown", (event) => {
+  if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
+  if (resolutionDialog.open || isEditableTarget(event.target)) return;
+  const match = shortcuts.find(
+    (shortcut) => shortcut.key === event.key.toLowerCase() && shortcut.shift === event.shiftKey
+  );
+  if (!match) return;
+  event.preventDefault();
+  match.action();
+});
+
+window.app = Object.freeze({
+  run: canvas.run,
+  undo: canvas.undo,
+  redo: canvas.redo,
+  commands: canvas.commands,
+  get doc() {
+    return canvas.doc;
+  },
+});
+
+const consoleForm = document.getElementById("consoleForm");
+const consoleInput = document.getElementById("consoleInput");
+const consoleLog = document.getElementById("consoleLog");
+
+consoleForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const code = consoleInput.value;
+  if (!code.trim()) return;
+  try {
+    const value = await new Function("app", `return (${code});`)(window.app);
+    const printed = value === undefined ? "undefined" : JSON.stringify(value, null, 2);
+    consoleLog.dataset.error = "false";
+    consoleLog.textContent += `${consoleLog.textContent ? "\n" : ""}> ${code}\n${printed}`;
+  } catch (error) {
+    consoleLog.dataset.error = "true";
+    consoleLog.textContent += `${consoleLog.textContent ? "\n" : ""}> ${code}\n${error.message}`;
+  }
+});
 
 document.getElementById("downloadButton").addEventListener("click", async () => {
   if (!canvas.doc.hasContent) return;

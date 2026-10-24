@@ -327,6 +327,61 @@ dialog::backdrop {
   border-color: #1749b7;
 }
 
+.console-panel {
+  position: fixed;
+  z-index: 11;
+  right: 12px;
+  bottom: 12px;
+  width: min(92vw, 28rem);
+  border: 1px solid #d4d9e3;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.console-panel summary {
+  padding: 8px 12px;
+  cursor: pointer;
+  font-weight: 650;
+}
+
+.console-panel form {
+  display: flex;
+  gap: 8px;
+  padding: 0 12px 8px;
+}
+
+.console-panel input {
+  flex: 1;
+  min-width: 0;
+  min-height: 36px;
+  padding: 6px 8px;
+  border: 1px solid #b8c0d1;
+  border-radius: 7px;
+}
+
+.console-panel button {
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid #1749b7;
+  border-radius: 8px;
+  color: #fff;
+  background: #1749b7;
+  cursor: pointer;
+}
+
+.console-panel pre {
+  max-height: 10rem;
+  margin: 0;
+  padding: 0 12px 12px;
+  overflow: auto;
+  white-space: pre-wrap;
+  color: #24314d;
+}
+
+.console-panel pre[data-error="true"] {
+  color: #a32121;
+}
+
 @media (max-width: 560px) {
   .controls {
     justify-content: flex-start;

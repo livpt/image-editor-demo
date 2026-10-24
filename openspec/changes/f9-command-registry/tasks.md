@@ -18,9 +18,9 @@
 
 ## 4. Page facade
 
-- [ ] 4.1 Bind Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z, and Ctrl/Cmd+Y to undo and redo, and publish frozen `window.app`. Verify the shortcut table ignores an open dialog and a focused text field.
-- [ ] 4.2 Add the console panel in `index.html` and `styles.css`. Verify a submitted expression logs JSON or the error message.
-- [ ] 4.3 Add an import-boundary test and a catalog-versus-DOM test. Verify only `canvas.js` imports the history store, `index.js` imports neither the registry nor the history store, and filter and tool button ids match registered names.
+- [x] 4.1 Bind Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z, and Ctrl/Cmd+Y to undo and redo, and publish frozen `window.app`. Verify the shortcut table ignores an open dialog and a focused text field.
+- [x] 4.2 Add the console panel in `index.html` and `styles.css`. Verify a submitted expression logs JSON or the error message.
+- [x] 4.3 Add an import-boundary test and a catalog-versus-DOM test. Verify only `canvas.js` imports the history store, `index.js` imports neither the registry nor the history store, and filter and tool button ids match registered names.
 
 ## 5. Large-image check
 

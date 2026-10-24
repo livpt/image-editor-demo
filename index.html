@@ -135,6 +135,21 @@
       </form>
     </dialog>
 
+    <details id="consolePanel" class="console-panel">
+      <summary>Console</summary>
+      <form id="consoleForm">
+        <input
+          id="consoleInput"
+          type="text"
+          spellcheck="false"
+          autocomplete="off"
+          aria-label="Command expression"
+        />
+        <button type="submit">Run</button>
+      </form>
+      <pre id="consoleLog" aria-live="polite"></pre>
+    </details>
+
     <script type="module" src="./index.js"></script>
   </body>
 </html>
