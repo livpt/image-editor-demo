@@ -7,7 +7,7 @@ description: Formally check HistoryStore undo/redo/cap and ImageBitmap lifetime 
 
 ## Property (plain words)
 
-**After every edit, undo, redo, reset, or dispose, every snapshot that left the store is closed exactly once, live snapshots stay open, past never exceeds the cap, and a new edit after undo discards the redo branch.**
+**After every edit, undo, redo, reset, or dispose, every snapshot that left the store is closed exactly once, live snapshots stay open, past never exceeds the count cap or the byte cap, and a new edit after undo discards the redo branch.**
 
 **Harm if broken:** large `ImageBitmap`s stay alive after eviction or branch (memory grows with each edit), or Redo restores pixels the user already replaced.
 
@@ -22,9 +22,9 @@ This is not a TLA+ model. Do not use `/statechart` for its results.
 | Item | Value |
 | --- | --- |
 | Module | `history-store.js` |
-| Class / methods | `HistoryStore` — `add`, `reset`, `undo`, `redo`, `dispose`, getters `canUndo` / `canRedo` / `size` |
+| Class / methods | `HistoryStore` — `add`, `reset`, `undo`, `redo`, `dispose`, `entries`, getters `canUndo` / `canRedo` / `size` / `bytes` |
 | Callers in scope (read-only for this check) | `canvas.js` uses the store; the check does not drive the canvas |
-| Sync commit | `9fa61ca8818f05ce26623537521d3030678580b9` |
+| Sync commit | `pending-entry-shape` |
 | Bounds | default `--depth 5 --limit 2` (~1k states); raise depth when changing the stack logic |
 
 Move the sync commit forward only after you confirm the check still describes the code at the new commit (re-run pass + one `--break` proof).
@@ -58,17 +58,22 @@ node .cursor/skills/verify-history-store/check.mjs --break no-branch-clear
 After every step:
 
 1. `past.length <= limit`
-2. `size` matches the three arrays; `canUndo` / `canRedo` match lengths
-3. No duplicate snapshot appears in past, present, and future together
-4. Every snapshot still in the store is not closed
-5. Every snapshot that left the store is closed exactly once
+2. Past snapshot bytes (`width * height * 4`) stay within `maxBytes`. Present is exempt.
+3. `bytes` equals the past and future total. `size` matches the three arrays. `canUndo` / `canRedo` match lengths.
+4. No duplicate snapshot appears in past, present, and future together
+5. Every snapshot still in the store is not closed
+6. Every snapshot that left the store is closed exactly once
+
+Entries are `{ name, label, params, snapshot }`. `close` runs on `snapshot`.
 
 Postconditions:
 
 - `add` leaves `future` empty (branch discard)
 - `reset` leaves past and future empty
-- `undo` / `redo` return the new present and move the old present onto the opposite stack
+- `undo` returns `{ present, undone }` or `null`. `redo` returns `{ present, redone }` or `null`. The old present moves onto the opposite stack.
 - `dispose` leaves the store empty
+
+The script also runs one direct byte-cap case. A 16-byte budget closes the oldest past frame and leaves the present open. A present frame larger than the budget stays until a later edit.
 
 ## Reading a failure
 
@@ -82,7 +87,6 @@ That sequence is the counterexample in the code's words. Fix the product code (o
 
 - Pixel contents or `ImageBitmap` behaviour in the browser (only `close()` lifetime)
 - The async commit queue and overlay path in `canvas.js`
-- Byte-size caps (not implemented yet; add when F9 lands)
 - Concurrent callers (the store is single-threaded on the main thread)
 
 Unit tests (`npm test`) and [verify-image-editor](../verify-image-editor/SKILL.md) still cover cases this bound does not.

@@ -81,6 +81,15 @@ function makeCanvas() {
     overlayContext.clearRect(0, 0, overlayEl.width, overlayEl.height);
   }
 
+  function bitmapEntry(snapshot) {
+    return {
+      name: "image.edit",
+      label: "Edit",
+      params: {},
+      snapshot,
+    };
+  }
+
   function createScratchCanvas(width, height, readFrequently = false) {
     const scratch = document.createElement("canvas");
     scratch.width = width;
@@ -105,8 +114,9 @@ function makeCanvas() {
     paint?.(bitmap);
 
     return enqueue(() => {
-      if (resetHistory) history.reset(bitmap);
-      else history.add(bitmap);
+      const entry = bitmapEntry(bitmap);
+      if (resetHistory) history.reset(entry);
+      else history.add(entry);
       emitState();
       return true;
     });
@@ -125,7 +135,8 @@ function makeCanvas() {
     });
   }
 
-  function restoreSnapshot(snapshot) {
+  function restoreSnapshot(entry) {
+    const snapshot = entry.snapshot;
     setSize({ width: snapshot.width, height: snapshot.height });
     context.clearRect(0, 0, canvasEl.width, canvasEl.height);
     context.drawImage(snapshot, 0, 0);
@@ -489,9 +500,9 @@ function makeCanvas() {
     undo() {
       if (pendingOperations > 0 || !history.canUndo) return Promise.resolve(false);
       return enqueue(() => {
-        const snapshot = history.undo();
-        if (!snapshot) return false;
-        restoreSnapshot(snapshot);
+        const moved = history.undo();
+        if (!moved) return false;
+        restoreSnapshot(moved.present);
         emitState();
         return true;
       });
@@ -500,9 +511,9 @@ function makeCanvas() {
     redo() {
       if (pendingOperations > 0 || !history.canRedo) return Promise.resolve(false);
       return enqueue(() => {
-        const snapshot = history.redo();
-        if (!snapshot) return false;
-        restoreSnapshot(snapshot);
+        const moved = history.redo();
+        if (!moved) return false;
+        restoreSnapshot(moved.present);
         emitState();
         return true;
       });
