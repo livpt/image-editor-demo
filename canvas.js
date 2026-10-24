@@ -69,7 +69,13 @@ function makeCanvas() {
     window.dispatchEvent(new CustomEvent("canvasstatechange", { detail }));
   }
 
+  const reportedErrors = new WeakSet();
+
   function reportError(error) {
+    if (error && typeof error === "object") {
+      if (reportedErrors.has(error)) return;
+      reportedErrors.add(error);
+    }
     console.error(error);
     window.dispatchEvent(
       new CustomEvent("canvaserror", {
@@ -86,15 +92,10 @@ function makeCanvas() {
     const settled = result.then(
       (value) => value,
       (error) => {
-        // Pointer-up awaits this rejection too, and must not report it a second time.
-        if (error && typeof error === "object") error.reported = true;
         reportError(error);
         throw error;
       }
     );
-    // Drop the busy flag before `settled` resumes the caller, so an awaited
-    // command can be followed by another one. The flag is still raised before
-    // this function returns, so a second call in the same turn stays busy.
     operationQueue = settled.then(
       () => {
         pendingOperations -= 1;
@@ -418,7 +419,6 @@ function makeCanvas() {
       label: "Ellipse",
       params: { cx: NUMBER_PARAM, cy: NUMBER_PARAM, rx: POSITIVE_PARAM, ry: POSITIVE_PARAM },
       render(ctx, { cx, cy, rx, ry }) {
-        // ellipse() throws when a radius is 0, and the preview runs before validation.
         if (!(rx > 0) || !(ry > 0)) return;
         ctx.beginPath();
         ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
@@ -576,7 +576,7 @@ function makeCanvas() {
         await run(name, tool.paramsFrom(current));
       } catch (error) {
         clearOverlay();
-        if (error?.code !== "invalid" && !error?.reported) reportError(error);
+        if (error?.code !== "invalid") reportError(error);
       } finally {
         finishing = false;
       }

@@ -54,7 +54,6 @@ export class HistoryStore {
   get bytes() {
     let total = 0;
     for (const entry of this.past) total += bytesOf(entry.snapshot);
-    for (const entry of this.future) total += bytesOf(entry.snapshot);
     return total;
   }
 
@@ -72,7 +71,6 @@ export class HistoryStore {
     closeEntries(this.future);
     this.future = [];
 
-    // Present is exempt, so one oversized current image cannot evict itself.
     while (
       this.past.length > this.limit ||
       (this.past.length > 0 && this.bytes > this.maxBytes)
