@@ -75,11 +75,13 @@ function parseArgs(argv) {
   return opts;
 }
 
-function makeEntry(id) {
-  const snapshot = {
+// Document-shaped snapshot: the store reads `bytes` and calls `close`, nothing else.
+function makeSnapshot(id, width, height, layerCount = 1) {
+  return {
     id,
-    width: 2,
-    height: 2,
+    width,
+    height,
+    bytes: (layerCount + 1) * width * height * 4,
     closed: false,
     closeCount: 0,
     close() {
@@ -87,16 +89,19 @@ function makeEntry(id) {
       this.closeCount += 1;
     },
   };
+}
+
+function makeEntry(id) {
   return {
     name: "edit.step",
     label: String(id),
     params: { id },
-    snapshot,
+    snapshot: makeSnapshot(id, 2, 2),
   };
 }
 
 function snapshotBytes(snapshot) {
-  return (snapshot.width || 0) * (snapshot.height || 0) * 4;
+  return snapshot.bytes;
 }
 
 function living(history) {
@@ -284,24 +289,16 @@ function explore(HistoryStore, { depth, limit }) {
 }
 
 function checkByteCap(HistoryStore) {
-  function sized(id, width, height) {
+  function sized(id, width, height, layerCount = 1) {
     return {
       name: "edit.step",
       label: String(id),
       params: {},
-      snapshot: {
-        id,
-        width,
-        height,
-        closed: false,
-        close() {
-          this.closed = true;
-        },
-      },
+      snapshot: makeSnapshot(id, width, height, layerCount),
     };
   }
 
-  const store = new HistoryStore({ limit: 20, maxBytes: 16 });
+  const store = new HistoryStore({ limit: 20, maxBytes: 32 });
   const frames = [sized("a", 2, 2), sized("b", 2, 2), sized("c", 2, 2)];
   store.reset(frames[0]);
   store.add(frames[1]);
@@ -312,8 +309,18 @@ function checkByteCap(HistoryStore) {
   if (frames[2].snapshot.closed) {
     throw new Error("byte cap closed the present snapshot");
   }
-  if (store.past.length !== 1 || store.bytes !== 16) {
+  if (store.past.length !== 1 || store.bytes !== 32) {
     throw new Error(`byte cap left past ${store.past.length} and bytes ${store.bytes}`);
+  }
+
+  const layered = new HistoryStore({ limit: 20, maxBytes: 32 });
+  const thin = sized("thin", 2, 2, 1);
+  const thick = sized("thick", 2, 2, 3);
+  layered.reset(thin);
+  layered.add(thick);
+  layered.add(sized("next", 2, 2, 1));
+  if (!thick.snapshot.closed || layered.bytes !== 0) {
+    throw new Error("byte cap ignored the layer count folded into snapshot.bytes");
   }
 
   const hugeStore = new HistoryStore({ limit: 20, maxBytes: 8 });
@@ -322,6 +329,17 @@ function checkByteCap(HistoryStore) {
   if (huge.snapshot.closed || hugeStore.bytes !== 0) {
     throw new Error("byte cap evicted the present snapshot");
   }
+
+  const bare = new HistoryStore();
+  bare.reset(sized("ok", 1, 1));
+  bare.add({ name: "edit.step", label: "no-bytes", params: {}, snapshot: { close() {} } });
+  let threw = false;
+  try {
+    bare.add(sized("after", 1, 1));
+  } catch (error) {
+    threw = error instanceof TypeError;
+  }
+  if (!threw) throw new Error("a snapshot without bytes was accounted as free");
 }
 
 async function loadHistoryStore() {

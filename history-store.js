@@ -1,10 +1,16 @@
 function bytesOf(snapshot) {
-  if (!snapshot) return 0;
-  return (snapshot.width || 0) * (snapshot.height || 0) * 4;
+  if (typeof snapshot?.bytes !== "number") {
+    throw new TypeError("A history snapshot must report its bytes.");
+  }
+  return snapshot.bytes;
 }
 
 function closeEntry(entry) {
-  entry?.snapshot?.close?.();
+  if (!entry) return;
+  if (typeof entry.snapshot?.close !== "function") {
+    throw new TypeError("A history snapshot must be closable.");
+  }
+  entry.snapshot.close();
 }
 
 function closeEntries(entries) {

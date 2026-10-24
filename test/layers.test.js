@@ -5,8 +5,10 @@ import {
   addLayer,
   createDraft,
   deleteNode,
+  drawDocument,
   duplicateNode,
   findNode,
+  freezeDocument,
   groupLayer,
   layerSource,
   paintLayer,
@@ -240,4 +242,119 @@ test("publicLayers hides pixels and resolveActive repairs a stale id", () => {
   assert.equal(resolveActive(doc, 99), 3);
   assert.equal(resolveActive(doc, null), 3);
   assert.equal(resolveActive(createDraft({ width: 1, height: 1, pixels: px("o") }), null), 1);
+});
+
+function fakeEnv({ width = 4, height = 3, failOn = null } = {}) {
+  const created = [];
+  function createCanvas(w, h) {
+    const canvas = { kind: "canvas", width: w, height: h, draws: [] };
+    const context = {
+      globalAlpha: 1,
+      globalCompositeOperation: "source-over",
+      clearRect() {
+        canvas.draws.length = 0;
+      },
+      drawImage(source) {
+        canvas.draws.push({
+          source,
+          alpha: this.globalAlpha,
+          op: this.globalCompositeOperation,
+        });
+      },
+    };
+    return { canvas, context };
+  }
+  async function createImageBitmap(source) {
+    if (failOn !== null && source.tag === failOn) throw new Error("decode failed");
+    const bitmap = {
+      kind: "bitmap",
+      source,
+      width: source.width ?? width,
+      height: source.height ?? height,
+      closed: 0,
+      close() {
+        this.closed += 1;
+      },
+    };
+    created.push(bitmap);
+    return bitmap;
+  }
+  return { createCanvas, createImageBitmap, created };
+}
+
+test("drawDocument paints visible layers back to front with alpha, blend and isolated groups", () => {
+  let doc = threeLayers();
+  doc = groupLayer(doc, { id: 2 });
+  doc = setOpacity(doc, { id: 4, opacity: 50 });
+  doc = setBlend(doc, { id: 4, blend: "multiply" });
+  doc = setBlend(doc, { id: 2, blend: "screen" });
+  doc = addLayer(doc, { afterId: 3, name: "Hidden", pixels: px("hidden") });
+  doc = setVisibility(doc, { id: 5, visible: false });
+  doc = addLayer(doc, { afterId: 5, name: "Clear", pixels: px("clear") });
+  doc = setOpacity(doc, { id: 6, opacity: 0 });
+
+  const env = fakeEnv();
+  const root = env.createCanvas(4, 3);
+  drawDocument(doc, root.context, env.createCanvas);
+
+  assert.deepEqual(
+    root.canvas.draws.map((draw) => [draw.source.kind ?? draw.source.tag, draw.alpha, draw.op]),
+    [
+      ["bg", 1, "source-over"],
+      ["canvas", 0.5, "multiply"],
+      ["top", 1, "source-over"],
+    ]
+  );
+  const groupScratch = root.canvas.draws[1].source;
+  assert.deepEqual(groupScratch.draws, [{ source: px("mid"), alpha: 1, op: "screen" }]);
+  assert.equal(root.context.globalAlpha, 1);
+  assert.equal(root.context.globalCompositeOperation, "source-over");
+});
+
+test("freezeDocument copies every layer and the composite into one closable document", async () => {
+  const doc = groupLayer(threeLayers(), { id: 2 });
+  const env = fakeEnv();
+  const frozen = await freezeDocument(doc, env);
+
+  assert.equal(Object.isFrozen(frozen), true);
+  assert.deepEqual(ids(frozen.tree), ids(doc.tree));
+  assert.equal(frozen.width, 4);
+  assert.equal(frozen.nextId, doc.nextId);
+  assert.equal(frozen.composite.kind, "bitmap");
+  assert.equal(frozen.composite.source.kind, "canvas");
+  assert.deepEqual(
+    pixelLayers(frozen.tree).map((layer) => layer.pixels.source),
+    [px("bg"), px("mid"), px("top")]
+  );
+  assert.equal(frozen.bytes, 4 * 4 * 3 * 4);
+  assert.equal(JSON.stringify(frozen.layers).includes("pixels"), false);
+  assert.deepEqual(frozen.layers.map((node) => node.id), [1, 4, 3]);
+  assert.equal(env.created.length, 4);
+
+  frozen.close();
+  frozen.close();
+  assert.deepEqual(env.created.map((bitmap) => bitmap.closed), [1, 1, 1, 1]);
+
+  const again = await freezeDocument(frozen, env);
+  assert.equal(again.bytes, frozen.bytes);
+  assert.notEqual(again.composite, frozen.composite);
+  assert.equal(pixelLayers(again.tree)[0].pixels.source, pixelLayers(frozen.tree)[0].pixels);
+});
+
+test("freezeDocument closes what it created when a copy fails or has the wrong size", async () => {
+  const doc = threeLayers();
+  const failing = fakeEnv({ failOn: "mid" });
+  await assert.rejects(freezeDocument(doc, failing), /decode failed/);
+  assert.equal(failing.created.length, 3);
+  assert.deepEqual(failing.created.map((bitmap) => bitmap.closed), [1, 1, 1]);
+
+  const wrongSize = fakeEnv();
+  const skewed = paintLayer(doc, { id: 2, pixels: { tag: "odd", width: 9, height: 9 } });
+  await assert.rejects(freezeDocument(skewed, wrongSize), /9 × 9, expected 4 × 3/);
+  assert.deepEqual(wrongSize.created.map((bitmap) => bitmap.closed), [1, 1, 1, 1]);
+
+  const huge = { ...doc, width: 10_001, height: 5_000 };
+  const untouched = fakeEnv();
+  await assert.rejects(freezeDocument(huge, untouched), invalid("megapixel"));
+  assert.equal(untouched.created.length, 0);
 });

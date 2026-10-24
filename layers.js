@@ -361,6 +361,77 @@ export const resampleLayers = op(
     draft(doc, { width, height, tree: mapPixels(doc.tree, resample) })
 );
 
-export function compositeOperation(blend) {
-  return COMPOSITE_OPERATIONS[blend];
+function drawNodes(tree, width, height, context, createCanvas) {
+  for (const node of tree) {
+    if (!node.visible || node.opacity === 0) continue;
+    let source = node.pixels;
+    if (node.kind === "group") {
+      const scratch = createCanvas(width, height);
+      drawNodes(node.children, width, height, scratch.context, createCanvas);
+      source = scratch.canvas;
+    }
+    context.globalAlpha = node.opacity / 100;
+    context.globalCompositeOperation = COMPOSITE_OPERATIONS[node.blend];
+    context.drawImage(source, 0, 0);
+  }
+  context.globalAlpha = 1;
+  context.globalCompositeOperation = "source-over";
+}
+
+export function drawDocument(doc, context, createCanvas) {
+  context.clearRect(0, 0, doc.width, doc.height);
+  drawNodes(doc.tree, doc.width, doc.height, context, createCanvas);
+}
+
+function closeAll(bitmaps) {
+  for (const bitmap of bitmaps) bitmap.close();
+}
+
+export async function freezeDocument(doc, { createCanvas, createImageBitmap }) {
+  const problem = sizeProblem(doc.width, doc.height);
+  if (problem) throw new CommandError("invalid", problem);
+
+  const { canvas, context } = createCanvas(doc.width, doc.height);
+  drawDocument(doc, context, createCanvas);
+
+  const layers = pixelLayers(doc.tree);
+  const results = await Promise.allSettled(
+    [...layers.map((layer) => layer.pixels), canvas].map((source) => createImageBitmap(source))
+  );
+  const bitmaps = results
+    .filter((result) => result.status === "fulfilled")
+    .map((result) => result.value);
+  const failed = results.find((result) => result.status === "rejected");
+  if (failed) {
+    closeAll(bitmaps);
+    throw failed.reason;
+  }
+  const mismatch = bitmaps.find(
+    (bitmap) => bitmap.width !== doc.width || bitmap.height !== doc.height
+  );
+  if (mismatch) {
+    closeAll(bitmaps);
+    throw new Error(
+      `Bitmap is ${mismatch.width} × ${mismatch.height}, expected ${doc.width} × ${doc.height}.`
+    );
+  }
+
+  const composite = bitmaps.pop();
+  let next = 0;
+  const tree = mapPixels(doc.tree, () => bitmaps[next++]);
+  let open = true;
+  return Object.freeze({
+    width: doc.width,
+    height: doc.height,
+    nextId: doc.nextId,
+    tree,
+    composite,
+    layers: publicLayers(tree),
+    bytes: (bitmaps.length + 1) * doc.width * doc.height * 4,
+    close() {
+      if (!open) return;
+      open = false;
+      closeAll([...bitmaps, composite]);
+    },
+  });
 }
