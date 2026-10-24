@@ -6,12 +6,38 @@ import {
   normalizeRect,
 } from "./image-utils.js";
 import { HistoryStore } from "./history-store.js";
+import {
+  BLEND_MODES,
+  MAX_NAME_LENGTH,
+  addLayer,
+  createDraft,
+  deleteNode,
+  drawDocument,
+  duplicateNode,
+  findNode,
+  freezeDocument,
+  groupLayer,
+  layerSource,
+  paintLayer,
+  renameNode,
+  reorderNode,
+  resampleLayers,
+  resolveActive,
+  setBlend,
+  setOpacity,
+  setVisibility,
+  sizeProblem,
+} from "./layers.js";
 import { enableCanvasFilter, filters } from "./processing-utils.js";
 
 const HISTORY_LIMIT = 20;
 const HISTORY_BYTES = 256 * 1024 * 1024;
 const NUMBER_PARAM = { type: "number" };
 const POSITIVE_PARAM = { type: "number", exclusiveMin: 0 };
+const ID_PARAM = { type: "integer", min: 1 };
+const NAME_PARAM = { type: "string", trim: true, minLength: 1, maxLength: MAX_NAME_LENGTH };
+const OPTIONAL_NAME_PARAM = { type: "string", trim: true, maxLength: MAX_NAME_LENGTH, default: "" };
+const EMPTY_LAYERS = Object.freeze([]);
 
 const FILTER_LABELS = {
   grayscale: "Grayscale",
@@ -33,18 +59,44 @@ function makeCanvas() {
   let operationQueue = Promise.resolve();
   let disarmTool = () => {};
   let cancelOpenGesture = () => {};
+  let activeId = null;
+  let previewing = false;
+
+  const env = {
+    createCanvas(width, height) {
+      const { scratch, scratchContext } = createScratchCanvas(width, height);
+      return { canvas: scratch, context: scratchContext };
+    },
+    createImageBitmap: (source) => createImageBitmap(source),
+  };
+
+  function present() {
+    return history.present?.snapshot ?? null;
+  }
 
   function readDoc() {
     const view = history.entries();
+    const doc = present();
     return Object.freeze({
       width: canvasEl.width,
       height: canvasEl.height,
-      hasContent: history.present !== null,
+      hasContent: doc !== null,
       busy: pendingOperations > 0,
       canUndo: history.canUndo,
       canRedo: history.canRedo,
       bytes: history.bytes,
       history: view,
+      layers: doc?.layers ?? EMPTY_LAYERS,
+      activeId: doc ? activeId : null,
+    });
+  }
+
+  function commandContext() {
+    return Object.freeze({
+      width: canvasEl.width,
+      height: canvasEl.height,
+      present: present(),
+      activeId,
     });
   }
 
@@ -142,20 +194,37 @@ function makeCanvas() {
     canvasStack.hidden = false;
   }
 
-  function paintOver(draw) {
-    const { scratch, scratchContext } = createScratchCanvas(canvasEl.width, canvasEl.height);
-    scratchContext.drawImage(canvasEl, 0, 0);
+  function paintOver(doc, id, draw) {
+    const source = layerSource(doc, id);
+    const { scratch, scratchContext } = createScratchCanvas(doc.width, doc.height);
+    scratchContext.drawImage(source, 0, 0);
     draw(scratchContext);
-    return { source: scratch };
+    return { doc: paintLayer(doc, { id, pixels: scratch }) };
+  }
+
+  function previewOpacity(id, opacity) {
+    const doc = present();
+    if (!doc || pendingOperations > 0) return;
+    const draft = setOpacity(doc, { id, opacity });
+    drawDocument(draft, context, env.createCanvas);
+    previewing = true;
+  }
+
+  function cancelPreview() {
+    if (!previewing) return;
+    previewing = false;
+    const doc = present();
+    if (doc) blit(doc.composite);
   }
 
   async function commit(plan, invocation) {
-    const snapshot = await createImageBitmap(plan.source);
+    const snapshot = await freezeDocument(plan.doc, env);
     try {
-      blit(snapshot);
+      blit(snapshot.composite);
     } catch (error) {
-      snapshot.close?.();
-      if (history.present) blit(history.present.snapshot);
+      snapshot.close();
+      const doc = present();
+      if (doc) blit(doc.composite);
       throw error;
     }
 
@@ -167,6 +236,7 @@ function makeCanvas() {
     };
     if (invocation.historyMode === "reset") history.reset(entry);
     else history.add(entry);
+    activeId = resolveActive(snapshot, plan.activate ?? activeId);
     emitState();
     return Object.freeze({
       name: invocation.name,
@@ -187,6 +257,7 @@ function makeCanvas() {
 
   function run(name, rawParams = {}) {
     cancelOpenGesture();
+    cancelPreview();
     let descriptor;
     try {
       descriptor = registry.catalog.get(name);
@@ -209,7 +280,7 @@ function makeCanvas() {
 
     let invocation;
     try {
-      invocation = registry.dispatch(name, rawParams, readDoc());
+      invocation = registry.dispatch(name, rawParams, commandContext());
     } catch (error) {
       return Promise.reject(error);
     }
@@ -218,9 +289,12 @@ function makeCanvas() {
 
   function load(source, { label } = {}) {
     cancelOpenGesture();
+    cancelPreview();
     const width = source.naturalWidth || source.width;
     const height = source.naturalHeight || source.height;
     if (!width || !height) throw new Error("The image has invalid dimensions.");
+    const problem = sizeProblem(width, height);
+    if (problem) throw new CommandError("invalid", `Cannot load this image: ${problem}.`);
     if (pendingOperations > 0) {
       throw new CommandError("busy", "Cannot load an image while the canvas is busy.");
     }
@@ -236,9 +310,10 @@ function makeCanvas() {
       );
     }
 
+    const draft = createDraft({ width, height, pixels: scratch });
     return enqueue(() =>
       commit(
-        { source: scratch },
+        { doc: draft, activate: draft.tree[0].id },
         {
           name: descriptor.name,
           label: label || descriptor.label,
@@ -249,28 +324,35 @@ function makeCanvas() {
     );
   }
 
-  function undo() {
+  function restore(available, move, pick) {
     cancelOpenGesture();
-    if (pendingOperations > 0 || !history.canUndo) return Promise.resolve(null);
+    cancelPreview();
+    if (pendingOperations > 0 || !available) return Promise.resolve(null);
     return enqueue(() => {
-      const moved = history.undo();
+      const moved = move();
       if (!moved) return null;
-      blit(moved.present.snapshot);
+      blit(moved.present.snapshot.composite);
+      activeId = resolveActive(moved.present.snapshot, activeId);
       emitState();
-      return publicView(moved.undone);
+      return publicView(pick(moved));
     });
   }
 
+  function undo() {
+    return restore(history.canUndo, () => history.undo(), (moved) => moved.undone);
+  }
+
   function redo() {
-    cancelOpenGesture();
-    if (pendingOperations > 0 || !history.canRedo) return Promise.resolve(null);
-    return enqueue(() => {
-      const moved = history.redo();
-      if (!moved) return null;
-      blit(moved.present.snapshot);
-      emitState();
-      return publicView(moved.redone);
-    });
+    return restore(history.canRedo, () => history.redo(), (moved) => moved.redone);
+  }
+
+  function activate(id) {
+    const doc = present();
+    if (!doc) throw new CommandError("empty", "Load an image first.");
+    if (!findNode(doc.tree, id)) throw new CommandError("invalid", `no layer ${id}`);
+    activeId = id;
+    emitState();
+    return id;
   }
 
   registry.define({
@@ -295,15 +377,16 @@ function makeCanvas() {
       label: FILTER_LABELS[key],
       historyMode: "add",
       params: {},
-      execute() {
-        const { width, height } = canvasEl;
+      execute(_, { present: doc, activeId: id }) {
+        const source = layerSource(doc, id);
+        const { width, height } = doc;
         let scratch;
         let accelerated = false;
 
         if (filter.canvasFilter) {
           const acceleratedSurface = createScratchCanvas(width, height);
           if (enableCanvasFilter(acceleratedSurface.scratchContext, filter.canvasFilter)) {
-            acceleratedSurface.scratchContext.drawImage(canvasEl, 0, 0);
+            acceleratedSurface.scratchContext.drawImage(source, 0, 0);
             acceleratedSurface.scratchContext.filter = "none";
             scratch = acceleratedSurface.scratch;
             accelerated = true;
@@ -312,14 +395,14 @@ function makeCanvas() {
 
         if (!scratch) {
           const fallbackSurface = createScratchCanvas(width, height, true);
-          fallbackSurface.scratchContext.drawImage(canvasEl, 0, 0);
+          fallbackSurface.scratchContext.drawImage(source, 0, 0);
           const imageData = fallbackSurface.scratchContext.getImageData(0, 0, width, height);
           filter.transform(imageData.data);
           fallbackSurface.scratchContext.putImageData(imageData, 0, 0);
           scratch = fallbackSurface.scratch;
         }
 
-        return { source: scratch, info: { accelerated } };
+        return { doc: paintLayer(doc, { id, pixels: scratch }), info: { accelerated } };
       },
     });
   }
@@ -332,12 +415,21 @@ function makeCanvas() {
       width: { type: "integer", min: 1 },
       height: { type: "integer", min: 1 },
     },
-    execute({ width, height }) {
-      const { scratch, scratchContext } = createScratchCanvas(width, height);
-      scratchContext.imageSmoothingEnabled = true;
-      scratchContext.imageSmoothingQuality = "high";
-      scratchContext.drawImage(canvasEl, 0, 0, width, height);
-      return { source: scratch };
+    validate: ({ width, height }) => sizeProblem(width, height),
+    execute({ width, height }, { present: doc }) {
+      return {
+        doc: resampleLayers(doc, {
+          width,
+          height,
+          resample(pixels) {
+            const { scratch, scratchContext } = createScratchCanvas(width, height);
+            scratchContext.imageSmoothingEnabled = true;
+            scratchContext.imageSmoothingQuality = "high";
+            scratchContext.drawImage(pixels, 0, 0, width, height);
+            return scratch;
+          },
+        }),
+      };
     },
   });
 
@@ -372,22 +464,109 @@ function makeCanvas() {
       if (clipped.width < 1 || clipped.height < 1) return "crop area is empty";
     },
     execute(params, context) {
-      const clipped = clipRect(params, context);
-      const { scratch, scratchContext } = createScratchCanvas(clipped.width, clipped.height);
-      scratchContext.drawImage(
-        canvasEl,
-        clipped.x,
-        clipped.y,
-        clipped.width,
-        clipped.height,
-        0,
-        0,
-        clipped.width,
-        clipped.height
-      );
-      return { source: scratch };
+      const { x, y, width, height } = clipRect(params, context);
+      return {
+        doc: resampleLayers(context.present, {
+          width,
+          height,
+          resample(pixels) {
+            const { scratch, scratchContext } = createScratchCanvas(width, height);
+            scratchContext.drawImage(pixels, x, y, width, height, 0, 0, width, height);
+            return scratch;
+          },
+        }),
+      };
     },
   });
+
+  registry.define({
+    name: "layer.add",
+    label: "Add layer",
+    historyMode: "add",
+    params: { name: OPTIONAL_NAME_PARAM },
+    execute({ name }, { present: doc, activeId: id }) {
+      const { scratch } = createScratchCanvas(doc.width, doc.height);
+      return {
+        doc: addLayer(doc, { afterId: id, name: name || undefined, pixels: scratch }),
+        activate: doc.nextId,
+      };
+    },
+  });
+
+  registry.define({
+    name: "layer.group",
+    label: "Add group",
+    historyMode: "add",
+    params: { id: ID_PARAM, name: OPTIONAL_NAME_PARAM },
+    validate: ({ id, name }, { present: doc }) =>
+      groupLayer.problem(doc, { id, name: name || undefined }),
+    execute({ id, name }, { present: doc }) {
+      return { doc: groupLayer(doc, { id, name: name || undefined }), activate: doc.nextId };
+    },
+  });
+
+  registry.define({
+    name: "layer.delete",
+    label: "Delete layer",
+    historyMode: "add",
+    params: { id: ID_PARAM },
+    validate: (params, { present: doc }) => deleteNode.problem(doc, params),
+    execute(params, { present: doc, activeId: current }) {
+      const { node, parent, siblings, index } = findNode(doc.tree, params.id);
+      const neighbor = siblings[index - 1] ?? siblings[index + 1] ?? parent;
+      const activeRemoved = findNode([node], current) !== null;
+      return {
+        doc: deleteNode(doc, params),
+        activate: activeRemoved ? (neighbor?.id ?? null) : current,
+      };
+    },
+  });
+
+  registry.define({
+    name: "layer.duplicate",
+    label: "Duplicate layer",
+    historyMode: "add",
+    params: { id: ID_PARAM },
+    validate: (params, { present: doc }) => duplicateNode.problem(doc, params),
+    execute(params, { present: doc }) {
+      return { doc: duplicateNode(doc, params), activate: doc.nextId };
+    },
+  });
+
+  const layerEdits = {
+    "layer.rename": { label: "Rename layer", params: { name: NAME_PARAM }, op: renameNode },
+    "layer.reorder": {
+      label: "Reorder layer",
+      params: { parentId: { type: "integer", min: 0 }, index: { type: "integer", min: 0 } },
+      op: reorderNode,
+    },
+    "layer.visibility": {
+      label: "Toggle layer",
+      params: { visible: { type: "boolean" } },
+      op: setVisibility,
+    },
+    "layer.opacity": {
+      label: "Layer opacity",
+      params: { opacity: { type: "integer", min: 0, max: 100 } },
+      op: setOpacity,
+    },
+    "layer.blend": {
+      label: "Layer blend",
+      params: { blend: { type: "string", enum: [...BLEND_MODES] } },
+      op: setBlend,
+    },
+  };
+
+  for (const [name, edit] of Object.entries(layerEdits)) {
+    registry.define({
+      name,
+      label: edit.label,
+      historyMode: "add",
+      params: { id: ID_PARAM, ...edit.params },
+      validate: (params, { present: doc }) => edit.op.problem(doc, params),
+      execute: (params, { present: doc }) => ({ doc: edit.op(doc, params) }),
+    });
+  }
 
   function strokeSegment(ctx, x1, y1, x2, y2) {
     ctx.beginPath();
@@ -468,7 +647,8 @@ function makeCanvas() {
       historyMode: "add",
       params: tool.params,
       validate: tool.validate,
-      execute: (params) => paintOver((ctx) => tool.render(ctx, params)),
+      execute: (params, { present: doc, activeId: id }) =>
+        paintOver(doc, id, (ctx) => tool.render(ctx, params)),
     });
   }
 
@@ -478,6 +658,7 @@ function makeCanvas() {
       paramsFrom: tool.paramsFrom,
       preview: tool.render,
       previewAppends: tool.previewAppends,
+      paintsLayer: true,
     };
   }
   pointerTools["image.crop"] = {
@@ -485,6 +666,7 @@ function makeCanvas() {
     preview(ctx, { x, y, width, height }) {
       ctx.strokeRect(x, y, width, height);
     },
+    paintsLayer: false,
   };
 
   function renderGestureFrame(tool, session) {
@@ -561,6 +743,14 @@ function makeCanvas() {
       ) {
         return;
       }
+      if (tool.paintsLayer) {
+        try {
+          layerSource(present(), activeId);
+        } catch (error) {
+          reportError(error);
+          return;
+        }
+      }
 
       event.preventDefault();
       clearOverlay();
@@ -630,6 +820,8 @@ function makeCanvas() {
     redo,
     load,
     armTool,
+    activate,
+    previewOpacity,
     commands: registry.catalog,
     get doc() {
       return readDoc();
