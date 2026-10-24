@@ -5,10 +5,10 @@ alwaysApply: true
 
 # Feature branches from plan titles
 
-When starting a **new feature** in this repo (new OpenSpec/Linear change, new implementation plan, or first implementation work for a planned feature):
+When starting a **new feature** in this repo (a Linear issue, a new implementation plan, or first implementation work for a planned feature):
 
 1. Create and check out a branch **before** editing product code.
-2. Name it from the **plan title** (or the OpenSpec change / Linear issue title you are building), not a vague label like `feature` or `wip`.
+2. Name it from the **plan title** (or the Linear issue title you are building), not a vague label like `feature` or `wip`.
 3. Use the `cursor/` prefix, then a git-safe slug of that title: lowercase, spaces and punctuation → hyphens, collapse repeats, trim edges. Keep it readable and under ~60 characters when possible.
 4. If the title or plan mentions a Linear id (`MSHO-13`, etc.), keep that id in the slug so PRs stay linked (e.g. plan `F9 Command Registry MVP (Linear MSHO-13)` → `cursor/f9-command-registry-mvp-linear-msho-13`).
 5. Do not reuse `master` / `main` for feature work. Do not rename an unrelated existing branch to match a new plan.

@@ -1,5 +1,5 @@
 ---
-description: Archive finished planning docs so active openspec/changes stays empty of done work
+description: Archive finished planning docs so they are not treated as active work
 alwaysApply: true
 ---
 
@@ -9,28 +9,24 @@ When a feature, change, or plan is **finished building** (merged, shipped, or ab
 
 ## What counts as planning (must leave the active tree)
 
-- OpenSpec **active** changes under `openspec/changes/<name>/` (proposal, design, tasks, delta specs)
 - Standalone plans, briefs, RFCs, design notes, roadmaps, and task lists added for that work under the repo (e.g. `docs/plans/`, `*.plan.md` checked into the project)
-- Draft specs that only existed to drive that change and were never meant as long-lived main specs
+- Draft specs that only existed to drive that change and were never meant as long-lived docs
 
 ## What to do at finish
 
-1. **OpenSpec changes:** run `/opsx-archive` (or `openspec archive <name> -y`) so the change moves to `openspec/changes/archive/YYYY-MM-DD-<name>/`. Prefer syncing delta specs into `openspec/specs/` when the change defined product behavior.
-2. **Other planning files:** move them into a dated archive path next to related work (prefer `openspec/changes/archive/` for OpenSpec-tied docs, or `docs/archive/YYYY-MM-DD-<slug>/` for ad-hoc plans). Do not delete history unless the user asks.
-3. Confirm `openspec list` shows **no** completed-but-unarchived changes before starting unrelated new feature work.
-4. Do not keep “done” proposals beside new work in `openspec/changes/`.
+1. Move planning files into a dated archive path next to related work (`docs/archive/YYYY-MM-DD-<slug>/`). Do not delete history unless the user asks.
+2. Do not keep a finished plan beside new work.
 
-## What must stay (not orphaned plans)
+## What must stay
 
-- Main specs in `openspec/specs/` (behavior contracts after sync)
 - This repo’s Cursor rules and skills
-- Verification evidence and how-to (`test/manual/`, `.cursor/skills/verify-*`) — trim misleading “baseline failure” sections only when they still read as current bugs
-- Linear issues (update status there; do not mirror finished issue text into active OpenSpec changes)
+- Verification evidence and how-to (`test/manual/`, `.cursor/skills/verify-*`). Trim misleading “baseline failure” sections only when they still read as current bugs
+- Linear issues (update status there; do not copy finished issue text into new plans)
 
 ## When this fires
 
-- After merge of a feature branch whose OpenSpec change is complete
+- After merge of a feature branch
 - When the user says a change is done, shipped, or cancelled
-- During cleanup scans that find fully checked-off `tasks.md` still outside `archive/`
+- During cleanup scans that find a fully finished plan still sitting in an active docs path
 
-If unsure whether a doc is still driving work, ask once; default to archiving anything whose tasks are all done and whose code already landed on `master`.
+If unsure whether a doc is still driving work, ask once. Default to archiving anything whose work already landed on `master`.

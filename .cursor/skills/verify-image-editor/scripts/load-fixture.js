@@ -2,8 +2,7 @@
 //
 // Paste this whole file as the `expression` of a browser_cdp Runtime.evaluate
 // call with { awaitPromise: true, returnByValue: true }. Edit the last line to
-// change the fixture size (800x600 is quick; 4000x3000 is the large-image check
-// required by openspec/config.yaml).
+// change the fixture size (800x600 is quick; 4000x3000 is the large-image check).
 //
 // Why this path: the Cursor browser cannot open the OS file dialog, so the PNG is
 // generated in-page (same pixels as test/manual/large-image-fixture.html) and
