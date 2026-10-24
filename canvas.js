@@ -32,6 +32,7 @@ function makeCanvas() {
   let pendingOperations = 0;
   let operationQueue = Promise.resolve();
   let disarmTool = () => {};
+  let cancelOpenGesture = () => {};
 
   function readDoc() {
     const view = history.entries();
@@ -185,6 +186,7 @@ function makeCanvas() {
   }
 
   function run(name, rawParams = {}) {
+    cancelOpenGesture();
     let descriptor;
     try {
       descriptor = registry.catalog.get(name);
@@ -215,6 +217,7 @@ function makeCanvas() {
   }
 
   function load(source, { label } = {}) {
+    cancelOpenGesture();
     const width = source.naturalWidth || source.width;
     const height = source.naturalHeight || source.height;
     if (!width || !height) throw new Error("The image has invalid dimensions.");
@@ -247,6 +250,7 @@ function makeCanvas() {
   }
 
   function undo() {
+    cancelOpenGesture();
     if (pendingOperations > 0 || !history.canUndo) return Promise.resolve(null);
     return enqueue(() => {
       const moved = history.undo();
@@ -258,6 +262,7 @@ function makeCanvas() {
   }
 
   function redo() {
+    cancelOpenGesture();
     if (pendingOperations > 0 || !history.canRedo) return Promise.resolve(null);
     return enqueue(() => {
       const moved = history.redo();
@@ -517,13 +522,32 @@ function makeCanvas() {
         overlayEl.height
       );
 
+    const endOpenGesture = (pointerId) => {
+      scheduler.cancel();
+      if (pointerId != null) {
+        try {
+          overlayEl.releasePointerCapture?.(pointerId);
+        } catch {
+          // Capture may already be released.
+        }
+      }
+      session = null;
+      finishing = false;
+      clearOverlay();
+    };
+
     const cancelSession = () => {
       if (!session || finishing) return;
+      const pointerId = session.pointerId;
       finishing = true;
-      scheduler.cancel();
-      session = null;
-      clearOverlay();
-      finishing = false;
+      endOpenGesture(pointerId);
+    };
+
+    cancelOpenGesture = () => {
+      if (!session || finishing) return;
+      const pointerId = session.pointerId;
+      finishing = true;
+      endOpenGesture(pointerId);
     };
 
     overlayEl.onpointerdown = (event) => {
@@ -586,9 +610,12 @@ function makeCanvas() {
     overlayEl.onlostpointercapture = cancelSession;
 
     disarmTool = () => {
+      cancelOpenGesture();
+      cancelOpenGesture = () => {};
       scheduler.cancel();
       clearOverlay();
       session = null;
+      finishing = false;
       overlayEl.onpointerdown = null;
       overlayEl.onpointermove = null;
       overlayEl.onpointerup = null;
