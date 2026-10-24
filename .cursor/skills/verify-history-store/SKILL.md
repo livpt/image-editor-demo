@@ -24,7 +24,7 @@ This is not a TLA+ model. Do not use `/statechart` for its results.
 | Module | `history-store.js` |
 | Class / methods | `HistoryStore` — `add`, `reset`, `undo`, `redo`, `dispose`, `entries`, getters `canUndo` / `canRedo` / `size` / `bytes` |
 | Callers in scope (read-only for this check) | `canvas.js` uses the store; the check does not drive the canvas |
-| Sync commit | `c084ee969f53eb2bdb64e6df88dfca12a4ecf00c` |
+| Sync commit | `a6cafc8eb1182766d68b2ce337b53ca145982f04` |
 | Bounds | default `--depth 5 --limit 2` (~1k states); raise depth when changing the stack logic |
 
 Move the sync commit forward only after you confirm the check still describes the code at the new commit (re-run pass + one `--break` proof).
