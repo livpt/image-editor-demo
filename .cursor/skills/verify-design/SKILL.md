@@ -33,7 +33,7 @@ Run `doctor` first when the page behaves oddly. Exit 0 means the recorded pid is
 node .cursor/skills/verify-design/scripts/check-tokens.mjs
 ```
 
-The script resolves `styles.css` from the repository root (four directories above the script file), independent of the shell's working directory. Comments are ignored. A colour literal (`#` followed by 3, 4, 6, or 8 hex digits, or `rgb(`, `rgba(`, `hsl(`, `hsla(`) may appear only inside a `:root` rule. A `font-family` value must be a single `var(--font-...)` call, or a comma-separated stack in which every family is one of those calls.
+The script resolves `styles.css` from the repository root (four directories above the script file), independent of the shell's working directory. Comments are ignored. A colour literal (`#` followed by 3, 4, 6, or 8 hex digits, or `rgb(`, `rgba(`, `hsl(`, `hsla(`) may appear only inside a `:root` rule. A `font-family` value must be a single `var(--font-...)` call, or a comma-separated stack in which every family is one of those calls. The `font-family` descriptor inside `@font-face` names the face being loaded and is exempt.
 
 Violations print as `styles.css:<line>: <reason>`. Exit 0 is required for a pass. Exit 1 means violations were printed. Exit 2 means `styles.css` is missing.
 

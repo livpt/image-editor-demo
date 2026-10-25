@@ -8,7 +8,8 @@
  *
  * Colour literals are allowed only inside a :root rule: #hex of 3, 4, 6, or
  * 8 digits, and rgb(), rgba(), hsl(), hsla(). A font-family value must be
- * one var(--font-...) call, or a comma-separated stack of those calls.
+ * one var(--font-...) call, or a comma-separated stack of those calls. The
+ * font-family descriptor inside @font-face names the face and is exempt.
  * Comments are ignored. Quoted strings are not colour literals.
  *
  *   node .cursor/skills/verify-design/scripts/check-tokens.mjs
@@ -31,9 +32,10 @@ const FILE_LABEL = "styles.css";
 export function checkCss(css) {
   const lineOf = makeLineIndex(css);
   const violations = [];
-  /** @type {{ root: boolean }[]} */
+  /** @type {{ root: boolean, fontFace: boolean }[]} */
   const frames = [];
   const insideRoot = () => frames.some((frame) => frame.root);
+  const insideFontFace = () => frames.some((frame) => frame.fontFace);
 
   let i = 0;
   let chunkStart = 0;
@@ -41,6 +43,7 @@ export function checkCss(css) {
   const examineDeclaration = (chunk, startIndex) => {
     const masked = maskNoise(chunk);
     if (!insideRoot()) scanColors(masked, chunk, startIndex, lineOf, violations);
+    if (insideFontFace()) return;
     const match = masked.match(/^\s*([A-Za-z_-][\w-]*)\s*:/);
     if (!match || match[1].toLowerCase() !== "font-family") return;
     const rawValue = masked.slice(match.index + match[0].length);
@@ -69,7 +72,7 @@ export function checkCss(css) {
     if (ch === "{") {
       const prelude = css.slice(chunkStart, i);
       if (!insideRoot()) scanColors(maskNoise(prelude), prelude, chunkStart, lineOf, violations);
-      frames.push({ root: isRootPrelude(prelude) });
+      frames.push({ root: isRootPrelude(prelude), fontFace: isFontFacePrelude(prelude) });
       i += 1;
       chunkStart = i;
       continue;
@@ -261,6 +264,10 @@ function skipBalanced(text, openIndex) {
 
 function isRootPrelude(prelude) {
   return splitTopLevelCommas(maskNoise(prelude)).some(selectorIsRoot);
+}
+
+function isFontFacePrelude(prelude) {
+  return /^\s*@font-face\s*$/i.test(maskNoise(prelude));
 }
 
 function selectorIsRoot(selector) {
