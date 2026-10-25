@@ -13,7 +13,7 @@
       <fieldset id="controls" class="controls" aria-label="Image tools" disabled>
         <details class="control-item menu-control">
           <summary class="tool-button">
-            <img src="./assets/images/draw.svg" alt="" />
+            <span class="tool-icon" aria-hidden="true" style="--icon: url(./assets/images/draw.svg)"></span>
             <span>Draw</span>
           </summary>
           <div class="tool-menu">
@@ -25,7 +25,7 @@
         </details>
 
         <button type="button" class="control-item tool-button" id="cropButton">
-          <img src="./assets/images/crop-symbol.svg" alt="" />
+          <span class="tool-icon" aria-hidden="true" style="--icon: url(./assets/images/crop-symbol.svg)"></span>
           <span>Crop</span>
         </button>
 
@@ -34,13 +34,15 @@
           class="control-item tool-button"
           id="resizeButton"
         >
-          <img src="./assets/images/resize.svg" alt="" />
+          <span class="tool-icon" aria-hidden="true" style="--icon: url(./assets/images/resize.svg)"></span>
           <span>Resize</span>
         </button>
 
+        <span class="tool-sep" aria-hidden="true"></span>
+
         <details class="control-item menu-control">
           <summary class="tool-button">
-            <img src="./assets/images/filter.svg" alt="" />
+            <span class="tool-icon" aria-hidden="true" style="--icon: url(./assets/images/filter.svg)"></span>
             <span>Filter</span>
           </summary>
           <div class="tool-menu">
@@ -51,22 +53,26 @@
           </div>
         </details>
 
+        <span class="tool-sep" aria-hidden="true"></span>
+
         <button type="button" class="control-item tool-button" id="undoButton">
-          <img src="./assets/images/undo.svg" alt="" />
+          <span class="tool-icon" aria-hidden="true" style="--icon: url(./assets/images/undo.svg)"></span>
           <span>Undo</span>
         </button>
 
         <button type="button" class="control-item tool-button" id="redoButton">
-          <img src="./assets/images/redo.svg" alt="" />
+          <span class="tool-icon" aria-hidden="true" style="--icon: url(./assets/images/redo.svg)"></span>
           <span>Redo</span>
         </button>
+
+        <span class="tool-sep" aria-hidden="true"></span>
 
         <button
           type="button"
           class="control-item tool-button"
           id="downloadButton"
         >
-          <img src="./assets/images/download.svg" alt="" />
+          <span class="tool-icon" aria-hidden="true" style="--icon: url(./assets/images/download.svg)"></span>
           <span>Save</span>
         </button>
       </fieldset>
