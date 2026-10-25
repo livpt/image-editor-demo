@@ -183,6 +183,22 @@ dialog input:focus-visible {
   list-style: none;
 }
 
+.controls > details:nth-of-type(1) > summary {
+  anchor-name: --draw-tool;
+}
+
+.controls > details:nth-of-type(2) > summary {
+  anchor-name: --filter-tool;
+}
+
+.controls > details:nth-of-type(1) > .tool-menu {
+  position-anchor: --draw-tool;
+}
+
+.controls > details:nth-of-type(2) > .tool-menu {
+  position-anchor: --filter-tool;
+}
+
 .menu-control > summary::-webkit-details-marker {
   display: none;
 }
@@ -338,6 +354,8 @@ dialog input:focus-visible {
 
 .layer-item[aria-selected="true"] > .layer-row {
   background: var(--active);
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
   box-shadow: inset 2px 0 0 var(--color-primary);
 }
 
@@ -829,7 +847,8 @@ dialog::backdrop {
   .tool-menu {
     position: fixed;
     top: var(--toolbar-height);
-    left: 50%;
-    transform: translateX(-50%);
+    left: anchor(left);
+    transform: none;
+    position-try-fallbacks: flip-inline;
   }
 }
