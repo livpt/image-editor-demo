@@ -2,9 +2,7 @@
 /**
  * Check styles.css for design-token violations.
  *
- * styles.css is read from the repository root, four directories above this
- * script (.cursor/skills/verify-design/scripts/). The process working
- * directory is not used.
+ * The process working directory is not used.
  *
  * Colour literals are allowed only inside a :root rule: #hex of 3, 4, 6, or
  * 8 digits, and rgb(), rgba(), hsl(), hsla(). A font-family value must be
@@ -41,7 +39,7 @@ export function checkCss(css) {
   let chunkStart = 0;
 
   const examineDeclaration = (chunk, startIndex) => {
-    const masked = maskNoise(chunk);
+    const masked = blankCommentsAndStrings(chunk);
     if (!insideRoot()) scanColors(masked, chunk, startIndex, lineOf, violations);
     if (insideFontFace()) return;
     const match = masked.match(/^\s*([A-Za-z_-][\w-]*)\s*:/);
@@ -71,7 +69,7 @@ export function checkCss(css) {
     }
     if (ch === "{") {
       const prelude = css.slice(chunkStart, i);
-      if (!insideRoot()) scanColors(maskNoise(prelude), prelude, chunkStart, lineOf, violations);
+      if (!insideRoot()) scanColors(blankCommentsAndStrings(prelude), prelude, chunkStart, lineOf, violations);
       frames.push({ root: isRootPrelude(prelude), fontFace: isFontFacePrelude(prelude) });
       i += 1;
       chunkStart = i;
@@ -87,7 +85,7 @@ export function checkCss(css) {
     if (ch === ";") {
       const chunk = css.slice(chunkStart, i);
       if (frames.length > 0) examineDeclaration(chunk, chunkStart);
-      else if (!insideRoot()) scanColors(maskNoise(chunk), chunk, chunkStart, lineOf, violations);
+      else if (!insideRoot()) scanColors(blankCommentsAndStrings(chunk), chunk, chunkStart, lineOf, violations);
       i += 1;
       chunkStart = i;
       continue;
@@ -98,7 +96,7 @@ export function checkCss(css) {
   if (chunkStart < css.length) {
     const chunk = css.slice(chunkStart);
     if (frames.length > 0) examineDeclaration(chunk, chunkStart);
-    else if (!insideRoot()) scanColors(maskNoise(chunk), chunk, chunkStart, lineOf, violations);
+    else if (!insideRoot()) scanColors(blankCommentsAndStrings(chunk), chunk, chunkStart, lineOf, violations);
   }
 
   violations.sort((a, b) => a.index - b.index || a.reason.localeCompare(b.reason));
@@ -165,8 +163,7 @@ function skipString(css, i) {
   return i;
 }
 
-/** Replace comments and quoted strings with spaces, keeping newlines and indexes. */
-function maskNoise(text) {
+function blankCommentsAndStrings(text) {
   const out = text.split("");
   let i = 0;
   while (i < text.length) {
@@ -263,11 +260,11 @@ function skipBalanced(text, openIndex) {
 }
 
 function isRootPrelude(prelude) {
-  return splitTopLevelCommas(maskNoise(prelude)).some(selectorIsRoot);
+  return splitTopLevelCommas(blankCommentsAndStrings(prelude)).some(selectorIsRoot);
 }
 
 function isFontFacePrelude(prelude) {
-  return /^\s*@font-face\s*$/i.test(maskNoise(prelude));
+  return /^\s*@font-face\s*$/i.test(blankCommentsAndStrings(prelude));
 }
 
 function selectorIsRoot(selector) {

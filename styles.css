@@ -542,7 +542,6 @@ dialog input:focus-visible {
   max-width: 100%;
   line-height: 0;
   vertical-align: top;
-  /* outline, not border: the stack width is set in px by canvas.js and a border would rescale the canvas */
   outline: 1px solid var(--border);
   box-shadow: var(--shadow-1);
 }
@@ -827,7 +826,6 @@ dialog::backdrop {
     white-space: nowrap;
   }
 
-  /* fixed so the scrolling bar's overflow clip cannot swallow the open menu */
   .tool-menu {
     position: fixed;
     top: var(--toolbar-height);
