@@ -476,24 +476,39 @@ dialog input:focus-visible {
 }
 
 .drag-helper {
-  max-width: 34rem;
+  max-width: 32rem;
   margin: 0 auto;
-  padding: clamp(3rem, 10vh, 7rem) 1.5rem 2rem;
+  padding: clamp(3rem, 12vh, 8rem) 1.5rem 2rem;
 }
 
 .drag-helper h1 {
-  margin: 1rem 0 0.4rem;
-  font-size: clamp(1.5rem, 4vw, 2.2rem);
+  margin: 24px 0 8px;
+  font-size: clamp(28px, 4vw, 36px);
+  font-weight: 400;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
 }
 
 .drag-helper p {
-  margin: 0 auto 1.3rem;
-  color: #59657d;
+  margin: 0 auto 24px;
+  color: var(--fg-muted);
 }
 
 .drag-image {
-  width: min(269px, 70vw);
+  width: min(160px, 50vw);
   height: auto;
+  filter: grayscale(1);
+  opacity: 0.5;
+}
+
+.upload-button {
+  display: inline-flex;
+  position: relative;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  padding: 0 18px;
+  font-size: 14px;
 }
 
 .upload-button input {
@@ -507,13 +522,18 @@ dialog input:focus-visible {
 }
 
 .app-status {
-  min-height: 1.5rem;
-  margin: 0.5rem 1rem;
-  color: #46536e;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  margin: 0 0 8px;
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
 }
 
 .app-status[data-error="true"] {
-  color: #a32121;
+  color: var(--danger);
 }
 
 .canvas-stack {
@@ -522,6 +542,13 @@ dialog input:focus-visible {
   max-width: 100%;
   line-height: 0;
   vertical-align: top;
+  /* outline, not border: the stack width is set in px by canvas.js and a border would rescale the canvas */
+  outline: 1px solid var(--border);
+  box-shadow: var(--shadow-1);
+}
+
+.canvas-stack[hidden] {
+  display: none;
 }
 
 #imageProcessed {
@@ -754,4 +781,57 @@ dialog::backdrop {
 
 .console-panel pre[data-error="true"] {
   color: var(--danger);
+}
+
+@media (max-width: 1280px) {
+  :root {
+    --layers-width: 240px;
+  }
+}
+
+@media (max-width: 900px) {
+  body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: var(--toolbar-height) minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      "toolbar"
+      "canvas"
+      "layers"
+      "console";
+  }
+
+  .layers-panel {
+    max-height: 50vh;
+    border-left: 0;
+    border-top: 1px solid var(--border);
+  }
+}
+
+@media (max-width: 768px) {
+  .controls {
+    justify-content: flex-start;
+    overflow-x: auto;
+  }
+
+  .tool-button {
+    padding: 0 8px;
+  }
+
+  .tool-button > span:not(.tool-icon) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  /* fixed so the scrolling bar's overflow clip cannot swallow the open menu */
+  .tool-menu {
+    position: fixed;
+    top: var(--toolbar-height);
+    left: 50%;
+    transform: translateX(-50%);
+  }
 }
