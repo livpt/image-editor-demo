@@ -21,7 +21,7 @@ The Layers panel on the right lists the document's stack with the front layer at
 
 ## How to get to it (user POV)
 
-- The panel is always visible under the toolbar on the right (stacked below the image on a narrow window).
+- The panel is the right-hand grid column under the toolbar (stacked below the image, above the console drawer, at 900px and narrower).
 - Click `Add layer`, `Add group`, `Duplicate`, or `Delete` in the panel.
 - Click a row to select it. Press Enter or Space on a focused row to select it.
 - Click a row's eye button to hide or show it.

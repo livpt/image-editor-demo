@@ -1,0 +1,48 @@
+---
+description: Build and restyle the editor UI against the Cursor design system in DESIGN.md
+globs: styles.css, index.html, index.js, layers.js, layer-drag.js
+alwaysApply: false
+---
+
+# Editor UI design system
+
+Read `DESIGN.md` before changing any colour, font, spacing, radius, or shadow.
+
+## Colour
+
+Use colours only through CSS custom properties defined in `:root`. No raw hex or rgb elsewhere in `styles.css`.
+
+```css
+:root {
+  --color-primary: #F54E00;
+  --color-secondary: #E6E5E0;
+  --color-tertiary: #65AFE0;
+  --color-surface: #F2F1ED;
+  --color-on-surface: #000000;
+  --color-button-bg: #26251E;
+  --color-button-fg: #F7F7F4;
+}
+```
+
+## Type
+
+```css
+--font-sans: "Geist", system-ui, "Helvetica Neue", Helvetica, Arial, sans-serif;
+--font-mono: "Geist Mono", ui-monospace, Menlo, monospace;
+```
+
+Set headline weight to 400 with the tight tracking in `DESIGN.md`. Set body size to 14 to 16px and line-height to 1.5.
+
+Geist and Geist Mono are the stand-ins for CursorGothic and Berkeley Mono (SIL OFL). Do not bundle Cursor's proprietary fonts. Font files land with the restyle.
+
+## Interpretation
+
+Treat the 1 to 5px spacing scale and the 1 to 2.5px radius scale in `DESIGN.md` as hairlines and borders. Lay the UI out on a 4px grid.
+
+Read the sample button radius `3.35544e+07px` as a pill (`9999px`).
+
+Use the breakpoints 1280, 900, and 768.
+
+## Done
+
+Run the `verify-design` skill before claiming UI work done.

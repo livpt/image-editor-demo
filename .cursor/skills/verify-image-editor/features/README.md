@@ -16,6 +16,8 @@ This directory is the maintained source for verifying the user-facing behavior o
 - Canvas gestures: `scripts/drag-pointer.js` with `from`/`to` in intrinsic canvas pixels.
 - State: `scripts/read-state.js` before and after every action. Pixel samples use intrinsic coordinates. Its `layers` array is the panel as rendered, front of the stack first.
 - Wait on status text, `canUndo`/`canRedo`, or canvas size, never on a fixed delay.
+- The status line (`#appStatus`) is the mono strip directly above the canvas, inside the scrolling canvas column. Errors render in the orange `--color-primary`, not red.
+- The console is a `<details>` drawer at the bottom of the canvas column, under the image. Click `Console` to open it. `browser_type` with `submit: true` does not run the expression; click `Run`.
 - Do not call app modules directly and report it as a user path.
 
 ## Proof and skip reporting
