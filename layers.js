@@ -197,6 +197,90 @@ export function createDraft({
   });
 }
 
+function collectIds(tree, ids) {
+  for (const node of tree) {
+    if (!Number.isInteger(node?.id) || node.id < 1) return "layer ids must be positive integers";
+    if (ids.has(node.id)) return `duplicate layer id ${node.id}`;
+    ids.add(node.id);
+    if (node.kind === "group") {
+      if (!Array.isArray(node.children)) return `layer ${node.id} is a group with no children`;
+      const childProblem = collectIds(node.children, ids);
+      if (childProblem) return childProblem;
+    }
+  }
+  return null;
+}
+
+function nodeProblem(node) {
+  if (!node || (node.kind !== "pixel" && node.kind !== "group")) return "layer kind is invalid";
+  const style =
+    nameProblem(node.name) ||
+    opacityProblem(node.opacity) ||
+    blendProblem(node.blend) ||
+    (typeof node.visible === "boolean" ? null : "visible must be true or false");
+  if (style) return style;
+  if (node.kind === "pixel") return node.pixels == null ? "pixels are required" : null;
+  if (!Array.isArray(node.children)) return `layer ${node.id} is a group with no children`;
+  for (const child of node.children) {
+    const childProblem = nodeProblem(child);
+    if (childProblem) return childProblem;
+  }
+  return null;
+}
+
+function freezeIncoming(node) {
+  const style = {
+    visible: node.visible,
+    opacity: node.opacity,
+    blend: node.blend,
+  };
+  if (node.kind === "pixel") {
+    return pixelNode(node.id, node.name.trim(), node.pixels, {
+      ...style,
+      buffer: node.buffer ?? null,
+    });
+  }
+  return groupNode(
+    node.id,
+    node.name.trim(),
+    node.children.map(freezeIncoming),
+    style
+  );
+}
+
+export function createDraftFromTree({
+  width,
+  height,
+  nextId,
+  tree,
+  profile = null,
+  profileKnown = true,
+}) {
+  const ids = new Set();
+  let problem = sizeProblem(width, height);
+  if (!problem && !Array.isArray(tree)) problem = "a document needs a layer tree";
+  if (!problem) problem = collectIds(tree, ids);
+  if (!problem) {
+    for (const node of tree) {
+      problem = nodeProblem(node);
+      if (problem) break;
+    }
+  }
+  if (!problem && pixelLayers(tree).length < 1) problem = "a document needs a pixel layer";
+  if (!problem && (!Number.isInteger(nextId) || nextId < 1 || [...ids].some((id) => id >= nextId))) {
+    problem = "nextId must be an integer greater than every layer id";
+  }
+  if (problem) throw new CommandError("invalid", problem);
+  return Object.freeze({
+    width,
+    height,
+    nextId,
+    profile,
+    profileKnown,
+    tree: Object.freeze(tree.map(freezeIncoming)),
+  });
+}
+
 function op(problem, apply) {
   const run = (doc, params) => {
     const reason = problem(doc, params);

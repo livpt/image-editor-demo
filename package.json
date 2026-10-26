@@ -27,5 +27,8 @@
   "homepage": "https://livpt.github.io/image-editor-demo/",
   "devDependencies": {
     "vite": "8.3.5"
+  },
+  "dependencies": {
+    "fflate": "^0.8.3"
   }
 }

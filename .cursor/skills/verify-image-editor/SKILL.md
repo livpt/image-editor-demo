@@ -54,7 +54,7 @@ Proof standards:
 - Exercise the real user path: toolbar clicks and pointer gestures. `load-fixture.js` is the one accepted shortcut (it only replaces the OS file picker). Never call `canvas.*` methods from `index.js`'s imports directly and present that as proof.
 - Capture the action and the resulting state: status line plus `read-state.js` before and after, not only a final screenshot. A status message alone is not proof; confirm pixels or canvas size changed.
 - Undo proof means the pixel samples return to their exact pre-action values and `canRedo` becomes true.
-- Side effects: there is no persistence. The only side effect is the PNG download from `Save`, which the Cursor browser cannot inspect; record the status `"PNG download started."` and note that file content was not checked. Full export checks stay in `test/manual/README.md`.
+- Save downloads a file the Cursor browser cannot inspect. Record the status from the export dialog and leave the file bytes to `test/manual/README.md`. Autosave writes IndexedDB; the autosave recipe reloads the page and uses the restore dialog.
 - Check `Log.enable` / `Runtime.exceptionThrown` via `browser_cdp` for uncaught errors during the run and record any.
 
 ## Cleanup

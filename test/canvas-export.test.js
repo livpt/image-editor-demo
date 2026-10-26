@@ -33,6 +33,26 @@ globalThis.window = {
 let bitmapGate = Promise.resolve();
 globalThis.createImageBitmap = async (source) => {
   await bitmapGate;
+  if (source?.rgba && Number.isInteger(source.width) && Number.isInteger(source.height)) {
+    return {
+      width: source.width,
+      height: source.height,
+      rgba: new Uint8ClampedArray(source.rgba),
+      close() {},
+    };
+  }
+  if (typeof source?.arrayBuffer === "function") {
+    const bytes = new Uint8Array(await source.arrayBuffer());
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const width = view.getUint32(0);
+    const height = view.getUint32(4);
+    return {
+      width,
+      height,
+      rgba: new Uint8ClampedArray(bytes.subarray(8)),
+      close() {},
+    };
+  }
   const image = readPixels(source);
   return {
     width: image.width,
@@ -101,6 +121,43 @@ test("toBlob exports the opacity being committed, not the composite cancelPrevie
   }
 });
 
+test("toBlob forwards the requested type and quality", async () => {
+  await canvas.load(solid(255, 0, 0));
+  const blob = await canvas.toBlob({ type: "image/jpeg", quality: 0.8 });
+  assert.equal(blob.type, "image/jpeg");
+  assert.equal(blob.quality, 0.8);
+});
+
+test("jumpTo walks history inside one step and toProjectBlob reopens those pixels", async () => {
+  await canvas.load(solid(255, 0, 0));
+  const loaded = pixels();
+  const revisionAfterLoad = canvas.doc.revision;
+  await canvas.run("layer.opacity", { id: 1, opacity: 40 });
+  const faded = pixels();
+  assert.notDeepEqual(faded, loaded);
+  await canvas.run("layer.opacity", { id: 1, opacity: 80 });
+  const brighter = pixels();
+  assert.equal(canvas.doc.history.past.length, 2);
+
+  await canvas.jumpTo(1);
+  assert.deepEqual(pixels(), faded);
+  assert.equal(canvas.doc.canRedo, true);
+  await canvas.jumpTo(0);
+  assert.deepEqual(pixels(), loaded);
+  await canvas.jumpTo(2);
+  assert.deepEqual(pixels(), brighter);
+  assert.ok(canvas.doc.revision > revisionAfterLoad);
+
+  const project = await canvas.toProjectBlob();
+  assert.equal(project.type, "application/x-msho");
+  await canvas.load(solid(0, 0, 255));
+  assert.notDeepEqual(pixels(), brighter);
+  await canvas.loadProject(project);
+  assert.deepEqual(pixels(), brighter);
+  assert.equal(canvas.doc.canUndo, false);
+  assert.equal(canvas.doc.history.present.label, "Open project");
+});
+
 function readPixels(source) {
   if (!source?.rgba || !Number.isInteger(source.width) || !Number.isInteger(source.height)) {
     throw new Error("image source has no pixels");
@@ -148,8 +205,23 @@ function createSurface() {
     getContext() {
       return surface.context;
     },
-    toBlob(callback, type) {
-      callback({ rgba: new Uint8ClampedArray(surface.rgba), type });
+    toBlob(callback, type, quality) {
+      const rgba = new Uint8ClampedArray(surface.rgba);
+      const header = new ArrayBuffer(8);
+      const view = new DataView(header);
+      view.setUint32(0, surface._width);
+      view.setUint32(4, surface._height);
+      const body = new Uint8Array(8 + rgba.byteLength);
+      body.set(new Uint8Array(header), 0);
+      body.set(rgba, 8);
+      callback({
+        type: type || "image/png",
+        quality,
+        rgba,
+        async arrayBuffer() {
+          return body.buffer.slice(0);
+        },
+      });
     },
   };
   surface.context = {

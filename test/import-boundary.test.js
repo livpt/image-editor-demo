@@ -112,5 +112,51 @@ test("the console panel evaluates against the frozen facade", () => {
   assert.match(html, /id="consoleLog"/);
   assert.match(index, /window\.app = Object\.freeze/);
   assert.match(index, /new Function\("app"/);
-  assert.match(index, /resolutionDialog\.open \|\| isEditableTarget/);
+  assert.match(index, /dialogOpen\(\) \|\| isEditableTarget/);
+});
+
+test("the project codec stays behind the canvas", () => {
+  const importers = readdirSync(root)
+    .filter((name) => name.endsWith(".js"))
+    .filter((name) => /from\s+["']\.\/project-file\.js["']/.test(read(name)));
+  assert.deepEqual(importers, ["canvas.js"]);
+
+  const zipUsers = readdirSync(root)
+    .filter((name) => name.endsWith(".js"))
+    .filter((name) => /from\s+["']fflate["']/.test(read(name)));
+  assert.deepEqual(zipUsers, ["project-file.js"]);
+
+  const index = read("index.js");
+  const canvasSource = read("canvas.js");
+  assert.match(index, /from\s+["']\.\/keymap\.js["']/);
+  assert.match(index, /from\s+["']\.\/autosave\.js["']/);
+  assert.doesNotMatch(index, /from\s+["']\.\/project-file\.js["']/);
+  assert.doesNotMatch(canvasSource, /from\s+["']\.\/(?:keymap|autosave)\.js["']/);
+  assert.match(canvasSource, /"project\.open"/);
+  assert.match(index, /jumpTo:\s*canvas\.jumpTo/);
+});
+
+test("export, history, and restore controls are in the page", () => {
+  const html = read("index.html");
+  for (const id of [
+    "exportDialog",
+    "exportFilename",
+    "exportFormat",
+    "exportQuality",
+    "exportQualityRow",
+    "historyPanel",
+    "historyList",
+    "restoreDialog",
+    "restoreMessage",
+    "confirmRestore",
+    "discardRestore",
+  ]) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+  assert.match(html, /accept="image\/png,image\/jpeg,image\/webp,\.msho"/);
+  assert.match(html, /aria-keyshortcuts="Control\+Z"/);
+  assert.match(html, /aria-keyshortcuts="Control\+S"/);
+  assert.match(html, /aria-keyshortcuts="Control\+O"/);
+  assert.match(html, /aria-keyshortcuts="P"/);
+  assert.match(html, /Ctrl\+T is reserved by the browser/);
 });

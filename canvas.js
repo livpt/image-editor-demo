@@ -12,6 +12,7 @@ import {
   MAX_NAME_LENGTH,
   addLayer,
   createDraft,
+  createDraftFromTree,
   deleteNode,
   drawDocument,
   duplicateNode,
@@ -20,6 +21,7 @@ import {
   groupLayer,
   layerSource,
   paintLayer,
+  pixelLayers,
   renameNode,
   reorderNode,
   resampleLayers,
@@ -29,6 +31,7 @@ import {
   setVisibility,
   sizeProblem,
 } from "./layers.js";
+import { decodeProject, encodeProject } from "./project-file.js";
 import { filters } from "./processing-utils.js";
 import { cropBuffer, ingest, mergePainted, quantize } from "./pixel-buffer.js";
 
@@ -67,6 +70,7 @@ function makeCanvas() {
   let activeId = null;
   let previewing = false;
   let foreground = "#000000";
+  let revision = 0;
 
   const env = {
     createCanvas(width, height) {
@@ -108,6 +112,7 @@ function makeCanvas() {
       activeId: doc ? activeId : null,
       foreground,
       profile: profileView(doc),
+      revision,
     });
   }
 
@@ -127,6 +132,7 @@ function makeCanvas() {
       canRedo: history.canRedo,
       bytes: history.bytes,
       history: history.size,
+      revision,
     };
 
     for (const [id, enabled] of [
@@ -268,6 +274,7 @@ function makeCanvas() {
     if (invocation.historyMode === "reset") history.reset(entry);
     else history.add(entry);
     activeId = resolveActive(snapshot, plan.activate ?? activeId);
+    revision += 1;
     emitState();
     return Object.freeze({
       name: invocation.name,
@@ -364,6 +371,7 @@ function makeCanvas() {
       if (!moved) return null;
       blit(moved.present.snapshot.composite);
       activeId = resolveActive(moved.present.snapshot, activeId);
+      revision += 1;
       emitState();
       return publicView(pick(moved));
     });
@@ -375,6 +383,165 @@ function makeCanvas() {
 
   function redo() {
     return restore(history.canRedo, () => history.redo(), (moved) => moved.redone);
+  }
+
+  function jumpTo(index) {
+    cancelOpenGesture();
+    cancelPreview();
+    if (!history.present) {
+      return Promise.reject(new CommandError("empty", "Load an image first."));
+    }
+    const total = history.past.length + 1 + history.future.length;
+    if (!Number.isInteger(index) || index < 0 || index >= total) {
+      return Promise.reject(new CommandError("invalid", "That history step is not available."));
+    }
+    if (pendingOperations > 0) {
+      return Promise.reject(
+        new CommandError("busy", "Cannot change history while the canvas is busy.")
+      );
+    }
+    const delta = index - history.past.length;
+    if (delta === 0) return Promise.resolve(publicView(history.present));
+    return enqueue(() => {
+      let moved = null;
+      const steps = Math.abs(delta);
+      for (let step = 0; step < steps; step += 1) {
+        moved = delta < 0 ? history.undo() : history.redo();
+        if (!moved) break;
+      }
+      if (!moved) return null;
+      blit(moved.present.snapshot.composite);
+      activeId = resolveActive(moved.present.snapshot, activeId);
+      revision += 1;
+      emitState();
+      return publicView(moved.present);
+    });
+  }
+
+  async function projectBytes(source) {
+    if (source instanceof Uint8Array) return source;
+    if (typeof source?.arrayBuffer === "function") return new Uint8Array(await source.arrayBuffer());
+    throw new Error("The project file could not be read.");
+  }
+
+  async function layerCanvasFromPng(png, width, height) {
+    const blob = new Blob([png], { type: "image/png" });
+    const bitmap = await createImageBitmap(blob, {
+      colorSpaceConversion: "none",
+      premultiplyAlpha: "none",
+    });
+    try {
+      const { scratch, scratchContext } = createScratchCanvas(width, height);
+      scratchContext.drawImage(bitmap, 0, 0, width, height);
+      return scratch;
+    } finally {
+      bitmap.close?.();
+    }
+  }
+
+  async function treeFromProject(decoded) {
+    async function convert(node) {
+      if (node.kind === "group") {
+        return { ...node, children: await Promise.all(node.children.map(convert)) };
+      }
+      return {
+        kind: "pixel",
+        id: node.id,
+        name: node.name,
+        visible: node.visible,
+        opacity: node.opacity,
+        blend: node.blend,
+        pixels: await layerCanvasFromPng(node.png, decoded.width, decoded.height),
+        buffer: node.f32 ?? null,
+      };
+    }
+    return Promise.all(decoded.tree.map(convert));
+  }
+
+  function loadProject(source) {
+    cancelOpenGesture();
+    cancelPreview();
+    if (pendingOperations > 0) {
+      return Promise.reject(
+        new CommandError("busy", "Cannot load a project while the canvas is busy.")
+      );
+    }
+    const descriptor = registry.catalog.get("project.open");
+    return enqueue(async () => {
+      const decoded = decodeProject(await projectBytes(source));
+      const problem = sizeProblem(decoded.width, decoded.height);
+      if (problem) throw new CommandError("invalid", `Cannot open this project: ${problem}.`);
+      const tree = await treeFromProject(decoded);
+      const draft = createDraftFromTree({
+        width: decoded.width,
+        height: decoded.height,
+        nextId: decoded.nextId,
+        tree,
+        profile: decoded.profile,
+        profileKnown: decoded.profileKnown,
+      });
+      const layers = pixelLayers(draft.tree);
+      return commit(
+        { doc: draft, activate: layers[layers.length - 1]?.id ?? null },
+        {
+          name: descriptor.name,
+          label: descriptor.label,
+          params: { width: decoded.width, height: decoded.height },
+          historyMode: descriptor.historyMode,
+        }
+      );
+    });
+  }
+
+  async function encodeTree(tree) {
+    const encoded = [];
+    for (const node of tree) encoded.push(await encodeLayer(node));
+    return encoded;
+  }
+
+  async function encodeLayer(node) {
+    if (node.kind === "group") {
+      return {
+        kind: "group",
+        id: node.id,
+        name: node.name,
+        visible: node.visible,
+        opacity: node.opacity,
+        blend: node.blend,
+        children: await encodeTree(node.children),
+      };
+    }
+    const { scratch, scratchContext } = createScratchCanvas(node.pixels.width, node.pixels.height);
+    scratchContext.drawImage(node.pixels, 0, 0);
+    const blob = await canvasToBlob(scratch, "image/png");
+    return {
+      kind: "pixel",
+      id: node.id,
+      name: node.name,
+      visible: node.visible,
+      opacity: node.opacity,
+      blend: node.blend,
+      png: new Uint8Array(await blob.arrayBuffer()),
+      f32: node.buffer ?? undefined,
+    };
+  }
+
+  function toProjectBlob() {
+    if (!history.present) return Promise.resolve(null);
+    const snapshotWhenSettled = async () => {
+      if (pendingOperations > 0) return operationQueue.then(snapshotWhenSettled);
+      const doc = present();
+      const bytes = encodeProject({
+        width: doc.width,
+        height: doc.height,
+        nextId: doc.nextId,
+        profile: doc.profile,
+        profileKnown: doc.profileKnown,
+        tree: await encodeTree(doc.tree),
+      });
+      return new Blob([bytes], { type: "application/x-msho" });
+    };
+    return operationQueue.then(snapshotWhenSettled);
   }
 
   function activate(id) {
@@ -398,6 +565,22 @@ function makeCanvas() {
       throw new CommandError(
         "invalid",
         "image.load requires a decoded image. Use the load control."
+      );
+    },
+  });
+
+  registry.define({
+    name: "project.open",
+    label: "Open project",
+    historyMode: "reset",
+    params: {
+      width: { type: "integer", min: 1 },
+      height: { type: "integer", min: 1 },
+    },
+    execute() {
+      throw new CommandError(
+        "invalid",
+        "project.open requires a project file. Use the load control."
       );
     },
   });
@@ -893,7 +1076,9 @@ function makeCanvas() {
     run,
     undo,
     redo,
+    jumpTo,
     load,
+    loadProject,
     armTool,
     activate,
     previewOpacity,
@@ -905,19 +1090,23 @@ function makeCanvas() {
     get foreground() {
       return foreground;
     },
-    toBlob() {
+    toBlob(options = {}) {
+      const type = options.type ?? "image/png";
+      const quality = options.quality;
       if (!history.present) return Promise.resolve(null);
       // run() restores the committed composite before freezeDocument blits the
       // update. Snapshot only after that paint, so a save during an opacity
       // preview exports the value on screen.
       const snapshotWhenSettled = async () => {
         if (pendingOperations > 0) return operationQueue.then(snapshotWhenSettled);
-        const blob = await canvasToBlob(canvasEl);
+        const blob = await canvasToBlob(canvasEl, type, quality);
+        if (type !== "image/png") return blob;
         const profile = present()?.profile;
         return profile?.bytes ? withIccProfile(blob, profile) : blob;
       };
       return operationQueue.then(snapshotWhenSettled);
     },
+    toProjectBlob,
   });
 }
 

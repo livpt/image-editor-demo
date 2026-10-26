@@ -666,7 +666,9 @@ dialog::backdrop {
   background: color-mix(in oklab, var(--color-on-surface) 40%, transparent);
 }
 
-#resolutionForm {
+#resolutionForm,
+#exportForm,
+#restoreForm {
   display: grid;
   gap: 16px;
   padding: 20px;
@@ -702,7 +704,8 @@ dialog::backdrop {
   background: var(--hover);
 }
 
-#resolutionForm > label:not(.checkbox-row) {
+#resolutionForm > label:not(.checkbox-row),
+#exportForm > label {
   display: grid;
   gap: 6px;
   text-align: left;
@@ -710,7 +713,9 @@ dialog::backdrop {
   font-weight: 500;
 }
 
-#resolutionForm input[type="number"] {
+#resolutionForm input[type="number"],
+#exportForm input[type="text"],
+#exportForm select {
   width: 100%;
   height: 36px;
   padding: 0 10px;
@@ -722,7 +727,9 @@ dialog::backdrop {
   font-size: 13px;
 }
 
-#resolutionForm input[type="number"]:focus-visible {
+#resolutionForm input[type="number"]:focus-visible,
+#exportForm input[type="text"]:focus-visible,
+#exportForm select:focus-visible {
   border-color: var(--focus);
   outline-offset: 0;
 }
@@ -744,6 +751,86 @@ dialog::backdrop {
   color: var(--danger);
   font-size: 13px;
   text-align: left;
+}
+
+.form-note {
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: 13px;
+  text-align: left;
+}
+
+.export-quality {
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+}
+
+#exportForm > label.export-quality[hidden] {
+  display: none;
+}
+
+.export-quality input[type="range"] {
+  width: 100%;
+  accent-color: var(--color-button-bg);
+}
+
+.export-quality output {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.history-panel {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.history-panel h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.history-list {
+  display: grid;
+  gap: 4px;
+  max-height: 240px;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.history-step {
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.history-step:hover {
+  background: var(--hover);
+}
+
+.history-step[aria-current="step"] {
+  background: var(--active);
+  font-weight: 600;
+}
+
+.history-step[data-future="true"] {
+  color: var(--fg-muted);
+}
+
+.history-step:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 
 .dialog-actions {

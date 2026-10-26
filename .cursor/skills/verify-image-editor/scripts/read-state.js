@@ -47,6 +47,14 @@
     activeLayer: layers.find((layer) => layer.active)?.name ?? null,
     layerOpacity: Number(document.getElementById("layerOpacity").value),
     layerBlend: document.getElementById("layerBlend").value,
+    exportDialogOpen: document.getElementById("exportDialog").open,
+    restoreDialogOpen: document.getElementById("restoreDialog").open,
+    history: [...document.querySelectorAll("#historyList .history-step")].map((button) => ({
+      index: Number(button.dataset.index),
+      label: button.textContent,
+      current: button.getAttribute("aria-current") === "step",
+      future: button.dataset.future === "true",
+    })),
     pixels,
   };
 })([[10, 10], [400, 300]]);
