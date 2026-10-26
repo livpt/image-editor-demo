@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { quantize } from "../pixel-buffer.js";
 import {
+  brightnessPixels,
   createFrameScheduler,
   grayscalePixels,
   invertPixels,
@@ -12,6 +14,14 @@ import {
   thresholdPixels,
   validateDimensions,
 } from "../image-utils.js";
+
+function unitPixel(red, green, blue, alpha = 255) {
+  return new Float32Array([red / 255, green / 255, blue / 255, alpha / 255]);
+}
+
+function bytes(pixels) {
+  return [...quantize(pixels, 1, pixels.length / 4).data];
+}
 
 test("coalesces scheduled work into one frame using the latest callback", () => {
   const frames = [];
@@ -79,39 +89,40 @@ test("derives ratio-preserving dimensions", () => {
 });
 
 test("pixel transformations preserve alpha", () => {
-  const transforms = [
-    grayscalePixels,
-    thresholdPixels,
-    sepiaPixels,
-    invertPixels,
-  ];
+  const transforms = [grayscalePixels, thresholdPixels, sepiaPixels, invertPixels, brightnessPixels];
   for (const transform of transforms) {
-    const pixels = new Uint8ClampedArray([40, 120, 200, 73]);
-    transform(pixels);
-    assert.equal(pixels[3], 73);
+    const pixels = unitPixel(40, 120, 200, 73);
+    transform(pixels, -50);
+    assert.equal(bytes(pixels)[3], 73);
   }
 });
 
 test("grayscale uses luminance-weighted channels", () => {
-  const pixels = new Uint8ClampedArray([100, 150, 200, 255]);
+  const pixels = unitPixel(100, 150, 200);
   grayscalePixels(pixels);
-  assert.deepEqual([...pixels], [143, 143, 143, 255]);
+  assert.deepEqual(bytes(pixels), [143, 143, 143, 255]);
 });
 
 test("threshold produces black and white values", () => {
-  const pixels = new Uint8ClampedArray([
-    10, 10, 10, 12, 250, 250, 250, 34,
-  ]);
+  const pixels = new Float32Array([10 / 255, 10 / 255, 10 / 255, 12 / 255, 250 / 255, 250 / 255, 250 / 255, 34 / 255]);
   thresholdPixels(pixels);
-  assert.deepEqual([...pixels], [0, 0, 0, 12, 255, 255, 255, 34]);
+  assert.deepEqual(bytes(pixels), [0, 0, 0, 12, 255, 255, 255, 34]);
 });
 
-test("sepia and invert produce expected representative channels", () => {
-  const sepia = new Uint8ClampedArray([100, 150, 200, 44]);
+test("sepia and invert quantize to the previous 8-bit results", () => {
+  const sepia = unitPixel(100, 150, 200, 44);
   sepiaPixels(sepia);
-  assert.deepEqual([...sepia], [192, 171, 134, 44]);
+  assert.deepEqual(bytes(sepia), [192, 171, 133, 44]);
 
-  const inverted = new Uint8ClampedArray([10, 20, 30, 55]);
+  const inverted = unitPixel(10, 20, 30, 55);
   invertPixels(inverted);
-  assert.deepEqual([...inverted], [245, 235, 225, 55]);
+  assert.deepEqual(bytes(inverted), [245, 235, 225, 55]);
+});
+
+test("brightness shifts colour and does not clamp between edits", () => {
+  const pixels = unitPixel(10, 10, 10);
+  brightnessPixels(pixels, -50);
+  assert.ok(pixels[0] < 0);
+  brightnessPixels(pixels, 50);
+  assert.deepEqual(bytes(pixels), [10, 10, 10, 255]);
 });

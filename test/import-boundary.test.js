@@ -32,6 +32,13 @@ test("the page does not import the registry, the history store, or the layer eng
   assert.doesNotMatch(index, /from\s+["']\.\/layers\.js["']/);
 });
 
+test("pixel and profile modules stay behind canvas and image loading", () => {
+  const importers = readdirSync(root)
+    .filter((name) => name.endsWith(".js"))
+    .filter((name) => /from\s+["']\.\/(?:pixel-buffer|icc)\.js["']/.test(read(name)));
+  assert.deepEqual(importers.sort(), ["canvas.js", "image-io.js"]);
+});
+
 test("the layers panel wires its controls to the layer commands", () => {
   const html = read("index.html");
   const index = read("index.js");

@@ -20,6 +20,7 @@ function pixelNode(id, name, pixels, style = {}) {
     opacity: style.opacity ?? 100,
     blend: style.blend ?? "normal",
     pixels,
+    buffer: style.buffer ?? null,
   });
 }
 
@@ -50,6 +51,8 @@ function draft(doc, patch) {
     height: doc.height,
     nextId: doc.nextId,
     tree: doc.tree,
+    profile: doc.profile ?? null,
+    profileKnown: doc.profileKnown !== false,
     ...patch,
   });
 }
@@ -174,13 +177,22 @@ export function layerSource(doc, id) {
   return found.node.pixels;
 }
 
-export function createDraft({ width, height, pixels, name = "Background" }) {
+export function createDraft({
+  width,
+  height,
+  pixels,
+  name = "Background",
+  profile = null,
+  profileKnown = true,
+}) {
   const problem = sizeProblem(width, height) ?? nameProblem(name);
   if (problem) throw new CommandError("invalid", problem);
   return Object.freeze({
     width,
     height,
     nextId: 2,
+    profile,
+    profileKnown,
     tree: Object.freeze([pixelNode(1, name.trim(), pixels)]),
   });
 }
@@ -340,15 +352,21 @@ export const paintLayer = op(
     if (found.node.kind !== "pixel") return `"${found.node.name}" is a group; select a layer to paint`;
     return pixels == null ? "pixels are required" : null;
   },
-  (doc, { id, pixels }) =>
-    draft(doc, { tree: replaceNode(doc.tree, id, (node) => withNode(node, { pixels })) })
+  (doc, { id, pixels, buffer }) =>
+    draft(doc, {
+      tree: replaceNode(doc.tree, id, (node) => {
+        const patch = { pixels };
+        if (buffer !== undefined) patch.buffer = buffer;
+        return withNode(node, patch);
+      }),
+    })
 );
 
 function mapPixels(tree, transform) {
   return Object.freeze(
     tree.map((node) =>
       node.kind === "pixel"
-        ? withNode(node, { pixels: transform(node.pixels) })
+        ? withNode(node, transform(node))
         : withNode(node, { children: mapPixels(node.children, transform) })
     )
   );
@@ -387,7 +405,21 @@ function closeAll(bitmaps) {
   for (const bitmap of bitmaps) bitmap.close();
 }
 
-export async function freezeDocument(doc, { createCanvas, createImageBitmap }) {
+function freshFloatBytes(layers, previous) {
+  // A shared float buffer is billed on the snapshot that first stored that array.
+  const previousBuffers = new Map();
+  if (previous) {
+    for (const layer of pixelLayers(previous.tree)) previousBuffers.set(layer.id, layer.buffer ?? null);
+  }
+  let bytes = 0;
+  for (const layer of layers) {
+    if (!layer.buffer || previousBuffers.get(layer.id) === layer.buffer) continue;
+    bytes += layer.buffer.byteLength;
+  }
+  return bytes;
+}
+
+export async function freezeDocument(doc, { createCanvas, createImageBitmap }, previous = null) {
   const problem = sizeProblem(doc.width, doc.height);
   if (problem) throw new CommandError("invalid", problem);
 
@@ -418,16 +450,21 @@ export async function freezeDocument(doc, { createCanvas, createImageBitmap }) {
 
   const composite = bitmaps.pop();
   let next = 0;
-  const tree = mapPixels(doc.tree, () => bitmaps[next++]);
+  const tree = mapPixels(doc.tree, (node) => ({
+    pixels: bitmaps[next++],
+    buffer: node.buffer ?? null,
+  }));
   let open = true;
   return Object.freeze({
     width: doc.width,
     height: doc.height,
     nextId: doc.nextId,
+    profile: doc.profile ?? null,
+    profileKnown: doc.profileKnown !== false,
     tree,
     composite,
     layers: publicLayers(tree),
-    bytes: (bitmaps.length + 1) * doc.width * doc.height * 4,
+    bytes: (bitmaps.length + 1) * doc.width * doc.height * 4 + freshFloatBytes(layers, previous),
     close() {
       if (!open) return;
       open = false;

@@ -1,3 +1,7 @@
+import { embedIccInPng, extractIccProfile } from "./icc.js";
+
+const DECODE_OPTIONS = { colorSpaceConversion: "none", premultiplyAlpha: "none" };
+
 function browserEnvironment(overrides = {}) {
   return {
     createImageBitmap: globalThis.createImageBitmap?.bind(globalThis),
@@ -28,21 +32,32 @@ export async function decodeLocalImage(file, overrides) {
   }
 
   const environment = browserEnvironment(overrides);
+  let profile = null;
+  const profileKnown = true;
+  let bitmapSource = file;
+  if (typeof file.arrayBuffer === "function") {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    profile = await extractIccProfile(bytes, file.type);
+    bitmapSource = new Blob([bytes], { type: file.type });
+  }
+
   if (typeof environment.createImageBitmap === "function") {
-    const source = await environment.createImageBitmap(file);
+    const source = await environment.createImageBitmap(bitmapSource, DECODE_OPTIONS);
     return {
       source,
       method: "bitmap",
+      profile,
+      profileKnown,
       dispose: () => source.close?.(),
     };
   }
 
-  const url = environment.createObjectURL(file);
+  const url = environment.createObjectURL(bitmapSource);
   try {
     const source = environment.createImage();
     source.src = url;
     await waitForImage(source);
-    return { source, method: "object-url", dispose: () => {} };
+    return { source, method: "object-url", profile, profileKnown, dispose: () => {} };
   } finally {
     environment.revokeObjectURL(url);
   }
@@ -64,7 +79,7 @@ export async function decodeExternalImage(url, overrides) {
     );
   }
 
-  return { source, method: "external-url", dispose: () => {} };
+  return { source, method: "external-url", profile: null, profileKnown: false, dispose: () => {} };
 }
 
 export function canvasToBlob(canvas, type = "image/png") {
@@ -74,6 +89,13 @@ export function canvasToBlob(canvas, type = "image/png") {
       else reject(new Error("The image could not be exported."));
     }, type);
   });
+}
+
+export async function withIccProfile(blob, profile) {
+  if (!profile?.bytes) return blob;
+  const png = new Uint8Array(await blob.arrayBuffer());
+  const embedded = await embedIccInPng(png, profile);
+  return new Blob([embedded], { type: "image/png" });
 }
 
 export function downloadBlob(blob, filename, overrides) {

@@ -68,7 +68,7 @@ test("addLayer inserts in front of the active row and never mutates the input", 
   assert.equal(second.tree[1].name, "Layer 2");
   assert.deepEqual(
     { ...second.tree[1], pixels: undefined },
-    { kind: "pixel", id: 2, name: "Layer 2", visible: true, opacity: 100, blend: "normal", pixels: undefined }
+    { kind: "pixel", id: 2, name: "Layer 2", visible: true, opacity: 100, blend: "normal", pixels: undefined, buffer: null }
   );
 
   const between = addLayer(second, { afterId: 1, name: "  Sky ", pixels: px("b") });
@@ -203,9 +203,9 @@ test("resampleLayers resizes the document and visits every pixel layer once", ()
   const resized = resampleLayers(doc, {
     width: 8,
     height: 6,
-    resample: (pixels) => {
-      visited.push(pixels.tag);
-      return px(`${pixels.tag}@8x6`);
+    resample: (layer) => {
+      visited.push(layer.pixels.tag);
+      return { pixels: px(`${layer.pixels.tag}@8x6`), buffer: null };
     },
   });
   assert.deepEqual(visited, ["bg", "mid", "top"]);
@@ -225,6 +225,7 @@ test("publicLayers hides pixels and resolveActive repairs a stale id", () => {
   const doc = groupLayer(threeLayers(), { id: 2 });
   const view = publicLayers(doc.tree);
   assert.equal(JSON.stringify(view).includes("pixels"), false);
+  assert.equal(JSON.stringify(view).includes("buffer"), false);
   assert.deepEqual(view[1], {
     kind: "group",
     id: 4,
@@ -339,6 +340,29 @@ test("freezeDocument copies every layer and the composite into one closable docu
   assert.equal(again.bytes, frozen.bytes);
   assert.notEqual(again.composite, frozen.composite);
   assert.equal(pixelLayers(again.tree)[0].pixels.source, pixelLayers(frozen.tree)[0].pixels);
+});
+
+test("paintLayer keeps an omitted float buffer and can clear it", () => {
+  const buffer = new Float32Array([0.25, 0.5, 0.75, 1]);
+  const doc = paintLayer(threeLayers(), { id: 1, pixels: px("edited"), buffer });
+  const painted = paintLayer(doc, { id: 1, pixels: px("again") });
+  assert.equal(pixelLayers(painted.tree)[0].buffer, buffer);
+  const cleared = paintLayer(doc, { id: 1, pixels: px("cleared"), buffer: null });
+  assert.equal(pixelLayers(cleared.tree)[0].buffer, null);
+});
+
+test("freezeDocument counts a new float buffer once", async () => {
+  const buffer = new Float32Array(8);
+  const doc = paintLayer(threeLayers(), { id: 1, pixels: px("bg"), buffer });
+  const env = fakeEnv();
+  const frozen = await freezeDocument(doc, env);
+  assert.equal(frozen.bytes, 4 * 4 * 3 * 4 + buffer.byteLength);
+  assert.equal(frozen.profile, null);
+  assert.equal(frozen.profileKnown, true);
+
+  const again = await freezeDocument(frozen, env, frozen);
+  assert.equal(again.bytes, 4 * 4 * 3 * 4);
+  assert.equal(pixelLayers(again.tree)[0].buffer, buffer);
 });
 
 test("freezeDocument closes what it created when a copy fails or has the wrong size", async () => {

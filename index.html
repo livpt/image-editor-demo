@@ -50,6 +50,11 @@
             <button type="button" id="threshold">Threshold</button>
             <button type="button" id="sepia">Sepia</button>
             <button type="button" id="invert">Invert colors</button>
+            <label class="brightness-row">
+              Brightness
+              <input id="brightnessAmount" type="number" min="-100" max="100" step="1" value="0" />
+            </label>
+            <button type="button" id="brightness">Apply brightness</button>
           </div>
         </details>
 
@@ -128,6 +133,23 @@
           </label>
         </div>
       </fieldset>
+      <section id="colourPanel" class="colour-panel" aria-label="Colour">
+        <h2>Colour</h2>
+        <label class="layers-prop">
+          <span>Foreground</span>
+          <input id="foregroundColor" type="color" value="#000000" />
+        </label>
+        <label class="layers-prop">
+          <span>Hex</span>
+          <input id="foregroundHex" type="text" value="#000000" spellcheck="false" maxlength="7" />
+        </label>
+        <label class="layers-prop">
+          <span>RGB</span>
+          <input id="foregroundRgb" type="text" value="0, 0, 0" spellcheck="false" />
+        </label>
+        <p class="colour-readout">Cursor <span id="cursorHex">none</span> <span id="cursorRgb"></span></p>
+        <p id="documentInfo" class="document-info"></p>
+      </section>
     </aside>
 
     <dialog id="resolutionDialog" aria-labelledby="resolutionTitle">

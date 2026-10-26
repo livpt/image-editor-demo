@@ -273,3 +273,21 @@ test("string and boolean specs reject malformed schemas and defaults", () => {
   assert.throws(() => define({ a: { type: "boolean", min: 0 } }), (e) => e.code === "spec");
   define({ a: { type: "string", trim: true, minLength: 1, default: " ok " } });
 });
+
+test("a colour param is stored in lowercase and a bad colour is rejected", () => {
+  const registry = createRegistry();
+  registry.define({
+    name: "draw.line",
+    label: "Line",
+    historyMode: "add",
+    params: { color: { type: "color", default: "#000000" } },
+    execute: (params) => params,
+  });
+
+  assert.equal(registry.dispatch("draw.line", {}).params.color, "#000000");
+  assert.equal(registry.dispatch("draw.line", { color: "#AABBCC" }).params.color, "#aabbcc");
+  assert.throws(
+    () => registry.dispatch("draw.line", { color: "red" }),
+    (error) => error.code === "invalid" && error.message.includes("#RRGGBB")
+  );
+});

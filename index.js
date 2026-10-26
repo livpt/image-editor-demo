@@ -29,7 +29,11 @@ function closeContainingMenu(element) {
 
 async function installDecodedImage(decoded, label) {
   try {
-    await canvas.load(decoded.source, { label: `Load ${label}` });
+    await canvas.load(decoded.source, {
+      label: `Load ${label}`,
+      profile: decoded.profile,
+      profileKnown: decoded.profileKnown,
+    });
     dragHelper.classList.add("invisible");
     controls.disabled = false;
     layersControls.disabled = false;
@@ -186,11 +190,13 @@ for (const descriptor of canvas.commands.list()) {
     setStatus(`Applying ${descriptor.label.toLowerCase()}…`);
     const started = performance.now();
     try {
-      const result = await canvas.run(descriptor.name);
+      const params =
+        descriptor.name === "filter.brightness"
+          ? { amount: Number(document.getElementById("brightnessAmount").value) }
+          : {};
+      const result = await canvas.run(descriptor.name, params);
       const duration = Math.round((performance.now() - started) * 10) / 10;
-      setStatus(
-        `${result.label} applied in ${duration} ms${result.info.accelerated ? " using the canvas filter path" : ""}.`
-      );
+      setStatus(`${result.label} applied in ${duration} ms.`);
     } catch (error) {
       setStatus(error.message, true);
     }
@@ -335,6 +341,42 @@ function renderRows(nodes, activeId, depth) {
   return fragment;
 }
 
+const foregroundColor = document.getElementById("foregroundColor");
+const foregroundHex = document.getElementById("foregroundHex");
+const foregroundRgb = document.getElementById("foregroundRgb");
+const cursorHex = document.getElementById("cursorHex");
+const cursorRgb = document.getElementById("cursorRgb");
+const documentInfo = document.getElementById("documentInfo");
+
+function rgbText(hex) {
+  const red = Number.parseInt(hex.slice(1, 3), 16);
+  const green = Number.parseInt(hex.slice(3, 5), 16);
+  const blue = Number.parseInt(hex.slice(5, 7), 16);
+  return `${red}, ${green}, ${blue}`;
+}
+
+function hexFromRgb(text) {
+  const channels = text.split(",").map((part) => Number(part.trim()));
+  if (channels.length !== 3) return null;
+  if (channels.some((value) => !Number.isInteger(value) || value < 0 || value > 255)) return null;
+  return `#${channels.map((value) => value.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function syncForeground(hex) {
+  if (document.activeElement !== foregroundColor) foregroundColor.value = hex;
+  if (document.activeElement !== foregroundHex) foregroundHex.value = hex;
+  if (document.activeElement !== foregroundRgb) foregroundRgb.value = rgbText(hex);
+}
+
+function documentLine(doc) {
+  if (!doc.hasContent || !doc.profile) return "";
+  const size = `${doc.width} × ${doc.height}`;
+  if (!doc.profile.known) return `${size} · Profile: unavailable (assumed sRGB)`;
+  if (!doc.profile.name) return `${size} · Profile: none (assumed sRGB)`;
+  const shown = doc.profile.assumedSrgb ? "" : " (shown as sRGB)";
+  return `${size} · Profile: ${doc.profile.name}${shown}`;
+}
+
 function renderPanel() {
   const doc = canvas.doc;
   layersList.replaceChildren(renderRows(doc.layers, doc.activeId, 0));
@@ -343,6 +385,8 @@ function renderPanel() {
     document.getElementById(id).disabled = doc.busy || !doc.hasContent;
   }
   opacityInput.disabled = blendSelect.disabled = doc.busy || !active;
+  syncForeground(doc.foreground);
+  documentInfo.textContent = documentLine(doc);
   if (doc.busy || !active) return;
   opacityInput.value = String(active.opacity);
   opacityValue.value = String(active.opacity);
@@ -350,6 +394,28 @@ function renderPanel() {
 }
 
 window.addEventListener("canvasstatechange", renderPanel);
+renderPanel();
+
+function applyForeground(hex) {
+  if (!hex) return;
+  try {
+    canvas.setForeground(hex);
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+}
+
+foregroundColor.addEventListener("input", () => applyForeground(foregroundColor.value));
+foregroundHex.addEventListener("input", () => {
+  if (/^#[0-9a-f]{6}$/i.test(foregroundHex.value.trim())) applyForeground(foregroundHex.value.trim());
+});
+foregroundRgb.addEventListener("input", () => applyForeground(hexFromRgb(foregroundRgb.value)));
+
+window.addEventListener("canvassample", (event) => {
+  const sample = event.detail;
+  cursorHex.textContent = sample ? sample.hex : "none";
+  cursorRgb.textContent = sample ? `${sample.r}, ${sample.g}, ${sample.b}` : "";
+});
 
 function activateRow(id) {
   try {
@@ -541,9 +607,13 @@ window.app = Object.freeze({
   undo: canvas.undo,
   redo: canvas.redo,
   activate: canvas.activate,
+  setForeground: canvas.setForeground,
   commands: canvas.commands,
   get doc() {
     return canvas.doc;
+  },
+  get foreground() {
+    return canvas.foreground;
   },
 });
 

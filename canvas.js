@@ -1,10 +1,11 @@
 import { CommandError, createRegistry } from "./commands.js";
-import { canvasToBlob } from "./image-io.js";
+import { canvasToBlob, withIccProfile } from "./image-io.js";
 import {
   createFrameScheduler,
   mapPointToCanvas,
   normalizeRect,
 } from "./image-utils.js";
+import { isSrgbProfile } from "./icc.js";
 import { HistoryStore } from "./history-store.js";
 import {
   BLEND_MODES,
@@ -28,30 +29,34 @@ import {
   setVisibility,
   sizeProblem,
 } from "./layers.js";
-import { enableCanvasFilter, filters } from "./processing-utils.js";
+import { filters } from "./processing-utils.js";
+import { cropBuffer, ingest, mergePainted, quantize } from "./pixel-buffer.js";
 
 const HISTORY_LIMIT = 20;
-const HISTORY_BYTES = 256 * 1024 * 1024;
+const HISTORY_BYTES = 1024 * 1024 * 1024;
 const NUMBER_PARAM = { type: "number" };
 const POSITIVE_PARAM = { type: "number", exclusiveMin: 0 };
 const ID_PARAM = { type: "integer", min: 1 };
 const NAME_PARAM = { type: "string", trim: true, minLength: 1, maxLength: MAX_NAME_LENGTH };
 const OPTIONAL_NAME_PARAM = { type: "string", trim: true, maxLength: MAX_NAME_LENGTH, default: "" };
+const COLOR_PARAM = { type: "color", default: "#000000" };
 const EMPTY_LAYERS = Object.freeze([]);
+const FOREGROUND_PATTERN = /^#[0-9a-f]{6}$/i;
 
 const FILTER_LABELS = {
   grayscale: "Grayscale",
   threshold: "Threshold",
   sepia: "Sepia",
   invert: "Invert colors",
+  brightness: "Brightness",
 };
 
 function makeCanvas() {
   const canvasEl = document.getElementById("imageProcessed");
   const overlayEl = document.getElementById("imageOverlay");
   const canvasStack = document.getElementById("canvasStack");
-  const context = canvasEl.getContext("2d");
-  const overlayContext = overlayEl.getContext("2d");
+  const context = canvasEl.getContext("2d", { colorSpace: "srgb" });
+  const overlayContext = overlayEl.getContext("2d", { colorSpace: "srgb" });
   const history = new HistoryStore({ limit: HISTORY_LIMIT, maxBytes: HISTORY_BYTES });
   const registry = createRegistry();
 
@@ -61,17 +66,30 @@ function makeCanvas() {
   let cancelOpenGesture = () => {};
   let activeId = null;
   let previewing = false;
+  let foreground = "#000000";
 
   const env = {
     createCanvas(width, height) {
       const { scratch, scratchContext } = createScratchCanvas(width, height);
       return { canvas: scratch, context: scratchContext };
     },
-    createImageBitmap: (source) => createImageBitmap(source),
+    createImageBitmap: (source) =>
+      createImageBitmap(source, { colorSpaceConversion: "none", premultiplyAlpha: "none" }),
   };
 
   function present() {
     return history.present?.snapshot ?? null;
+  }
+
+  function profileView(doc) {
+    if (!doc) return null;
+    if (!doc.profileKnown) return Object.freeze({ known: false, name: null, assumedSrgb: true });
+    if (!doc.profile) return Object.freeze({ known: true, name: null, assumedSrgb: true });
+    return Object.freeze({
+      known: true,
+      name: doc.profile.name,
+      assumedSrgb: isSrgbProfile(doc.profile.name),
+    });
   }
 
   function readDoc() {
@@ -88,6 +106,8 @@ function makeCanvas() {
       history: view,
       layers: doc?.layers ?? EMPTY_LAYERS,
       activeId: doc ? activeId : null,
+      foreground,
+      profile: profileView(doc),
     });
   }
 
@@ -178,10 +198,10 @@ function makeCanvas() {
     const scratch = document.createElement("canvas");
     scratch.width = width;
     scratch.height = height;
-    const scratchContext = scratch.getContext(
-      "2d",
-      readFrequently ? { willReadFrequently: true } : undefined
-    );
+    const scratchContext = scratch.getContext("2d", {
+      colorSpace: "srgb",
+      ...(readFrequently ? { willReadFrequently: true } : {}),
+    });
     if (!scratchContext) throw new Error("Canvas processing is unavailable.");
     return { scratch, scratchContext };
   }
@@ -194,12 +214,23 @@ function makeCanvas() {
     canvasStack.hidden = false;
   }
 
-  function paintOver(doc, id, draw) {
+  function paintOver(doc, id, draw, color) {
     const source = layerSource(doc, id);
-    const { scratch, scratchContext } = createScratchCanvas(doc.width, doc.height);
+    const node = findNode(doc.tree, id).node;
+    const { scratch, scratchContext } = createScratchCanvas(doc.width, doc.height, Boolean(node.buffer));
     scratchContext.drawImage(source, 0, 0);
+    const before = node.buffer ? scratchContext.getImageData(0, 0, doc.width, doc.height) : null;
+    scratchContext.strokeStyle = color;
     draw(scratchContext);
-    return { doc: paintLayer(doc, { id, pixels: scratch }) };
+    const patch = { id, pixels: scratch };
+    if (node.buffer) {
+      patch.buffer = mergePainted(
+        node.buffer,
+        before,
+        scratchContext.getImageData(0, 0, doc.width, doc.height)
+      );
+    }
+    return { doc: paintLayer(doc, patch) };
   }
 
   function previewOpacity(id, opacity) {
@@ -218,7 +249,7 @@ function makeCanvas() {
   }
 
   async function commit(plan, invocation) {
-    const snapshot = await freezeDocument(plan.doc, env);
+    const snapshot = await freezeDocument(plan.doc, env, present());
     try {
       blit(snapshot.composite);
     } catch (error) {
@@ -287,7 +318,7 @@ function makeCanvas() {
     return enqueue(async () => commit(await invocation.plan, invocation));
   }
 
-  function load(source, { label } = {}) {
+  function load(source, { label, profile = null, profileKnown = true } = {}) {
     cancelOpenGesture();
     cancelPreview();
     const width = source.naturalWidth || source.width;
@@ -310,7 +341,7 @@ function makeCanvas() {
       );
     }
 
-    const draft = createDraft({ width, height, pixels: scratch });
+    const draft = createDraft({ width, height, pixels: scratch, profile, profileKnown });
     return enqueue(() =>
       commit(
         { doc: draft, activate: draft.tree[0].id },
@@ -376,33 +407,21 @@ function makeCanvas() {
       name: `filter.${key}`,
       label: FILTER_LABELS[key],
       historyMode: "add",
-      params: {},
-      execute(_, { present: doc, activeId: id }) {
-        const source = layerSource(doc, id);
+      params: filter.params ?? {},
+      execute(params, { present: doc, activeId: id }) {
+        const node = findNode(doc.tree, id)?.node;
+        if (!node || node.kind !== "pixel") layerSource(doc, id);
         const { width, height } = doc;
-        let scratch;
-        let accelerated = false;
-
-        if (filter.canvasFilter) {
-          const acceleratedSurface = createScratchCanvas(width, height);
-          if (enableCanvasFilter(acceleratedSurface.scratchContext, filter.canvasFilter)) {
-            acceleratedSurface.scratchContext.drawImage(source, 0, 0);
-            acceleratedSurface.scratchContext.filter = "none";
-            scratch = acceleratedSurface.scratch;
-            accelerated = true;
-          }
-        }
-
-        if (!scratch) {
-          const fallbackSurface = createScratchCanvas(width, height, true);
-          fallbackSurface.scratchContext.drawImage(source, 0, 0);
-          const imageData = fallbackSurface.scratchContext.getImageData(0, 0, width, height);
-          filter.transform(imageData.data);
-          fallbackSurface.scratchContext.putImageData(imageData, 0, 0);
-          scratch = fallbackSurface.scratch;
-        }
-
-        return { doc: paintLayer(doc, { id, pixels: scratch }), info: { accelerated } };
+        const surface = createScratchCanvas(width, height, true);
+        surface.scratchContext.drawImage(node.pixels, 0, 0);
+        const imageData = surface.scratchContext.getImageData(0, 0, width, height);
+        const buffer = node.buffer ? node.buffer.slice() : ingest(imageData);
+        filter.transform(buffer, params.amount);
+        const quantized = quantize(buffer, width, height);
+        const output = surface.scratchContext.createImageData(width, height);
+        output.data.set(quantized.data);
+        surface.scratchContext.putImageData(output, 0, 0);
+        return { doc: paintLayer(doc, { id, pixels: surface.scratch, buffer }) };
       },
     });
   }
@@ -421,12 +440,12 @@ function makeCanvas() {
         doc: resampleLayers(doc, {
           width,
           height,
-          resample(pixels) {
+          resample(layer) {
             const { scratch, scratchContext } = createScratchCanvas(width, height);
             scratchContext.imageSmoothingEnabled = true;
             scratchContext.imageSmoothingQuality = "high";
-            scratchContext.drawImage(pixels, 0, 0, width, height);
-            return scratch;
+            scratchContext.drawImage(layer.pixels, 0, 0, width, height);
+            return { pixels: scratch, buffer: null };
           },
         }),
       };
@@ -469,10 +488,19 @@ function makeCanvas() {
         doc: resampleLayers(context.present, {
           width,
           height,
-          resample(pixels) {
-            const { scratch, scratchContext } = createScratchCanvas(width, height);
-            scratchContext.drawImage(pixels, x, y, width, height, 0, 0, width, height);
-            return scratch;
+          resample(layer) {
+            const { scratch, scratchContext } = createScratchCanvas(width, height, Boolean(layer.buffer));
+            let buffer = null;
+            if (layer.buffer) {
+              buffer = cropBuffer(layer.buffer, context.present.width, x, y, width, height);
+              const quantized = quantize(buffer, width, height);
+              const output = scratchContext.createImageData(width, height);
+              output.data.set(quantized.data);
+              scratchContext.putImageData(output, 0, 0);
+            } else {
+              scratchContext.drawImage(layer.pixels, x, y, width, height, 0, 0, width, height);
+            }
+            return { pixels: scratch, buffer };
           },
         }),
       };
@@ -578,7 +606,7 @@ function makeCanvas() {
   const drawTools = {
     "draw.line": {
       label: "Line",
-      params: { x1: NUMBER_PARAM, y1: NUMBER_PARAM, x2: NUMBER_PARAM, y2: NUMBER_PARAM },
+      params: { x1: NUMBER_PARAM, y1: NUMBER_PARAM, x2: NUMBER_PARAM, y2: NUMBER_PARAM, color: COLOR_PARAM },
       validate: (params) =>
         params.x1 === params.x2 && params.y1 === params.y2 ? "line has zero length" : undefined,
       render(ctx, { x1, y1, x2, y2 }) {
@@ -593,7 +621,7 @@ function makeCanvas() {
     },
     "draw.rect": {
       label: "Rectangle",
-      params: { x: NUMBER_PARAM, y: NUMBER_PARAM, width: POSITIVE_PARAM, height: POSITIVE_PARAM },
+      params: { x: NUMBER_PARAM, y: NUMBER_PARAM, width: POSITIVE_PARAM, height: POSITIVE_PARAM, color: COLOR_PARAM },
       render(ctx, { x, y, width, height }) {
         ctx.strokeRect(x, y, width, height);
       },
@@ -601,7 +629,7 @@ function makeCanvas() {
     },
     "draw.ellipse": {
       label: "Ellipse",
-      params: { cx: NUMBER_PARAM, cy: NUMBER_PARAM, rx: POSITIVE_PARAM, ry: POSITIVE_PARAM },
+      params: { cx: NUMBER_PARAM, cy: NUMBER_PARAM, rx: POSITIVE_PARAM, ry: POSITIVE_PARAM, color: COLOR_PARAM },
       render(ctx, { cx, cy, rx, ry }) {
         if (!(rx > 0) || !(ry > 0)) return;
         ctx.beginPath();
@@ -617,7 +645,7 @@ function makeCanvas() {
     },
     "draw.pen": {
       label: "Pen",
-      params: { points: { type: "points", minLength: 2 } },
+      params: { points: { type: "points", minLength: 2 }, color: COLOR_PARAM },
       validate(params) {
         const { points } = params;
         for (let index = 1; index < points.length; index += 1) {
@@ -648,7 +676,7 @@ function makeCanvas() {
       params: tool.params,
       validate: tool.validate,
       execute: (params, { present: doc, activeId: id }) =>
-        paintOver(doc, id, (ctx) => tool.render(ctx, params)),
+        paintOver(doc, id, (ctx) => tool.render(ctx, params), params.color),
     });
   }
 
@@ -679,6 +707,7 @@ function makeCanvas() {
     const previewParams = tool.previewAppends
       ? { points: [previous, ...framePoints] }
       : tool.paramsFrom(session);
+    if (tool.paintsLayer) overlayContext.strokeStyle = foreground;
     tool.preview(overlayContext, previewParams);
   }
 
@@ -787,7 +816,10 @@ function makeCanvas() {
       session = null;
       overlayEl.releasePointerCapture?.(event.pointerId);
       try {
-        await run(name, tool.paramsFrom(current));
+        await run(
+          name,
+          tool.paintsLayer ? { ...tool.paramsFrom(current), color: foreground } : tool.paramsFrom(current)
+        );
       } catch (error) {
         clearOverlay();
         if (error?.code !== "invalid") reportError(error);
@@ -814,6 +846,49 @@ function makeCanvas() {
     };
   }
 
+  function channelHex(value) {
+    return value.toString(16).padStart(2, "0");
+  }
+
+  function publishSample(detail) {
+    window.dispatchEvent(new CustomEvent("canvassample", { detail }));
+  }
+
+  function sampleAt(event) {
+    if (!present()) {
+      publishSample(null);
+      return;
+    }
+    const point = mapPointToCanvas(
+      event.clientX,
+      event.clientY,
+      overlayEl.getBoundingClientRect(),
+      overlayEl.width,
+      overlayEl.height
+    );
+    const x = Math.floor(point.x);
+    const y = Math.floor(point.y);
+    if (x < 0 || y < 0 || x >= canvasEl.width || y >= canvasEl.height) {
+      publishSample(null);
+      return;
+    }
+    const pixel = context.getImageData(x, y, 1, 1).data;
+    const hex = `#${channelHex(pixel[0])}${channelHex(pixel[1])}${channelHex(pixel[2])}`;
+    publishSample({ x, y, r: pixel[0], g: pixel[1], b: pixel[2], hex });
+  }
+
+  overlayEl.addEventListener?.("pointermove", sampleAt);
+  overlayEl.addEventListener?.("pointerleave", () => publishSample(null));
+
+  function setForeground(hex) {
+    if (typeof hex !== "string" || !FOREGROUND_PATTERN.test(hex)) {
+      throw new CommandError("invalid", "Foreground colour must be #RRGGBB.");
+    }
+    foreground = hex.toLowerCase();
+    emitState();
+    return foreground;
+  }
+
   return Object.freeze({
     run,
     undo,
@@ -822,17 +897,25 @@ function makeCanvas() {
     armTool,
     activate,
     previewOpacity,
+    setForeground,
     commands: registry.catalog,
     get doc() {
       return readDoc();
+    },
+    get foreground() {
+      return foreground;
     },
     toBlob() {
       if (!history.present) return Promise.resolve(null);
       // run() restores the committed composite before freezeDocument blits the
       // update. Snapshot only after that paint, so a save during an opacity
       // preview exports the value on screen.
-      const snapshotWhenSettled = () =>
-        pendingOperations > 0 ? operationQueue.then(snapshotWhenSettled) : canvasToBlob(canvasEl);
+      const snapshotWhenSettled = async () => {
+        if (pendingOperations > 0) return operationQueue.then(snapshotWhenSettled);
+        const blob = await canvasToBlob(canvasEl);
+        const profile = present()?.profile;
+        return profile?.bytes ? withIccProfile(blob, profile) : blob;
+      };
       return operationQueue.then(snapshotWhenSettled);
     },
   });

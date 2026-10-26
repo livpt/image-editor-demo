@@ -23,6 +23,7 @@ Run the checklist in the current stable Chrome, Firefox, and Safari releases. Re
 - Apply Grayscale, Threshold, Sepia, and Invert; undo and redo each result.
 - Make 25 edits and confirm no more than 20 undo operations are retained.
 - Export twice and confirm each PNG contains the latest committed image.
+- Save a PNG that was opened with an embedded profile and confirm the exported file still has an `iCCP` chunk (`pngcheck -v` or `exiftool`). A file with no profile exports without one.
 - Confirm all controls are reachable by keyboard and focus remains visible.
 - Check the browser console for uncaught errors.
 - Check the browser task manager or developer tools for retained memory after history eviction and replacement-image loading.

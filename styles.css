@@ -493,6 +493,72 @@ dialog input:focus-visible {
   font-size: 13px;
 }
 
+.colour-panel {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.colour-panel h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.colour-panel input[type="color"] {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel);
+}
+
+.colour-panel input[type="text"] {
+  grid-column: 2 / -1;
+  height: 28px;
+  min-width: 0;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.colour-readout,
+.document-info {
+  margin: 0;
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.brightness-row {
+  display: grid;
+  grid-template-columns: 1fr 4.5rem;
+  gap: 8px;
+  align-items: center;
+  padding: 8px;
+  color: var(--fg);
+  font-size: 13px;
+}
+
+.brightness-row input {
+  width: 100%;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
 .drag-helper {
   max-width: 32rem;
   margin: 0 auto;
