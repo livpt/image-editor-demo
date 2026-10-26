@@ -46,3 +46,4 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 - [Resize](./resize.md) covers the dialog, ratio lock, validation and cancel.
 - [Filters, undo and redo](./filters-undo-redo.md) covers the four filters, the undo/redo stack and its 20-step cap, and export status.
 - [Layers](./layers.md) covers the layers panel: add, group, duplicate, delete, eye toggle, rename, pointer reorder, opacity and blend, painting the selected layer, and the group paint refusal.
+- [Colour and bit depth](./colour.md) covers the foreground picker, the colour under the cursor, brightness round trip, and the document profile line.

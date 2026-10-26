@@ -60,6 +60,7 @@ function describe(schema) {
     return `must be a string of ${bounds.join(" and ")} characters`;
   }
   if (schema.type === "boolean") return "must be true or false";
+  if (schema.type === "color") return "must be a #RRGGBB colour";
   return "is invalid";
 }
 
@@ -114,11 +115,15 @@ function isFieldSchema(schema) {
   if (schema.type === "boolean") {
     return Object.keys(schema).every((key) => key === "type" || key === "default");
   }
+  if (schema.type === "color") {
+    return Object.keys(schema).every((key) => key === "type" || key === "default");
+  }
   return false;
 }
 
 function normalizeField(schema, value) {
   if (schema.type === "string" && schema.trim && typeof value === "string") return value.trim();
+  if (schema.type === "color" && typeof value === "string") return value.toLowerCase();
   return value;
 }
 
@@ -161,6 +166,9 @@ function fieldProblem(schema, value) {
   }
   if (schema.type === "boolean") {
     return typeof value === "boolean" ? null : describe(schema);
+  }
+  if (schema.type === "color") {
+    return typeof value === "string" && /^#[0-9a-f]{6}$/.test(value) ? null : describe(schema);
   }
   return describe(schema);
 }
