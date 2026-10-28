@@ -26,7 +26,7 @@ This directory is the maintained source for verifying the user-facing behavior o
 - Screenshots go through `browser_take_screenshot` with a bare filename, then `cp` from `$TMPDIR/cursor/screenshots/` into the evidence directory printed by `scripts/control.sh evidence`.
 - Undo proof requires the sampled pixels to return to their exact previous values.
 - Record the feature ID and entry point with every artifact.
-- Report an unreachable path with the attempted command and the unmet precondition. The known one is `Save`: the downloaded PNG cannot be read from the Cursor browser.
+- Save downloads a file the Cursor browser cannot read. Drive the export dialog and record the status. Full file checks stay in `test/manual/README.md`.
 - Do not report a skipped entry point as verified through a different path.
 
 ## Feature entry contract
@@ -47,3 +47,8 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 - [Filters, undo and redo](./filters-undo-redo.md) covers the four filters, the undo/redo stack and its 20-step cap, and export status.
 - [Layers](./layers.md) covers the layers panel: add, group, duplicate, delete, eye toggle, rename, pointer reorder, opacity and blend, painting the selected layer, and the group paint refusal.
 - [Colour and bit depth](./colour.md) covers the foreground picker, the colour under the cursor, brightness round trip, and the document profile line.
+- [Export](./export.md) covers the export dialog, PNG, JPEG and WebP quality, and the profile note.
+- [Project file](./project-file.md) covers saving and reopening a `.msho` project.
+- [Shortcuts](./shortcuts.md) covers the keymap, including keys reserved for later tools.
+- [History panel](./history-panel.md) covers clicking a history step, including a future step.
+- [Autosave](./autosave.md) covers the restore prompt after a reload.

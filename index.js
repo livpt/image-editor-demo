@@ -1,4 +1,5 @@
 import { canvas } from "./canvas.js";
+import { createAutosave } from "./autosave.js";
 import {
   decodeExternalImage,
   decodeLocalImage,
@@ -10,6 +11,7 @@ import {
 } from "./image-utils.js";
 import { createLayerActionGate } from "./layer-action-gate.js";
 import { attachLayerDrag } from "./layer-drag.js";
+import { keymap, matchShortcut } from "./keymap.js";
 
 const controls = document.getElementById("controls");
 const layersControls = document.getElementById("layersControls");
@@ -27,6 +29,13 @@ function closeContainingMenu(element) {
   element.closest("details")?.removeAttribute("open");
 }
 
+async function showDocument(message) {
+  dragHelper.classList.add("invisible");
+  controls.disabled = false;
+  layersControls.disabled = false;
+  setStatus(message);
+}
+
 async function installDecodedImage(decoded, label) {
   try {
     await canvas.load(decoded.source, {
@@ -34,19 +43,38 @@ async function installDecodedImage(decoded, label) {
       profile: decoded.profile,
       profileKnown: decoded.profileKnown,
     });
-    dragHelper.classList.add("invisible");
-    controls.disabled = false;
-    layersControls.disabled = false;
-    setStatus(`${label} is ready to edit.`);
+    await showDocument(`${label} is ready to edit.`);
   } finally {
     decoded.dispose();
   }
+}
+
+function isZipSignature(bytes) {
+  return bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04;
+}
+
+async function isProjectFile(file) {
+  const name = file.name?.toLowerCase() ?? "";
+  if (name.endsWith(".msho")) return true;
+  if (typeof file.slice !== "function") return false;
+  const bytes = new Uint8Array(await file.slice(0, 4).arrayBuffer());
+  return isZipSignature(bytes);
+}
+
+async function openProjectFile(file) {
+  setStatus(`Loading ${file.name || "project"}…`);
+  await canvas.loadProject(file);
+  await showDocument(`${file.name || "Project"} is ready to edit.`);
 }
 
 async function loadLocalFile(file) {
   if (!file) return;
   setStatus(`Loading ${file.name || "image"}…`);
   try {
+    if (await isProjectFile(file)) {
+      await openProjectFile(file);
+      return;
+    }
     const decoded = await decodeLocalImage(file);
     await installDecodedImage(decoded, file.name || "Image");
   } catch (error) {
@@ -101,11 +129,16 @@ const toolButtons = {
   cropButton: "image.crop",
 };
 
+function selectTool(name) {
+  if (controls.disabled) return;
+  setStatus(`${canvas.commands.get(name).label} tool selected.`);
+  canvas.armTool(name);
+}
+
 for (const [id, name] of Object.entries(toolButtons)) {
   document.getElementById(id).addEventListener("click", (event) => {
     closeContainingMenu(event.currentTarget);
-    setStatus(`${canvas.commands.get(name).label} tool selected.`);
-    canvas.armTool(name);
+    selectTool(name);
   });
 }
 
@@ -216,26 +249,45 @@ const redoEdit = announce(canvas.redo, "Redid");
 document.getElementById("undoButton").addEventListener("click", undoEdit);
 document.getElementById("redoButton").addEventListener("click", redoEdit);
 
-const shortcuts = [
-  { key: "z", shift: false, action: undoEdit },
-  { key: "z", shift: true, action: redoEdit },
-  { key: "y", shift: false, action: redoEdit },
-];
+const SHAPES = ["draw.line", "draw.rect", "draw.ellipse"];
+let shapeCursor = 0;
+
+function cycleShape() {
+  const name = SHAPES[shapeCursor];
+  shapeCursor = (shapeCursor + 1) % SHAPES.length;
+  selectTool(name);
+}
 
 function isEditableTarget(target) {
   if (!(target instanceof HTMLElement)) return false;
-  return target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
+  const tag = target.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable;
+}
+
+function dialogOpen() {
+  return [...document.querySelectorAll("dialog")].some((dialog) => dialog.open);
+}
+
+function runShortcut(binding) {
+  if (binding.note) {
+    setStatus(binding.note);
+    return;
+  }
+  if (binding.command === "history.undo") undoEdit();
+  else if (binding.command === "history.redo") redoEdit();
+  else if (binding.command === "file.export") openExportDialog();
+  else if (binding.command === "file.open") fileInput.click();
+  else if (binding.command === "draw.pen") selectTool("draw.pen");
+  else if (binding.command === "draw.shape") cycleShape();
+  else if (binding.command === "image.crop") selectTool("image.crop");
 }
 
 window.addEventListener("keydown", (event) => {
-  if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
-  if (resolutionDialog.open || isEditableTarget(event.target)) return;
-  const match = shortcuts.find(
-    (shortcut) => shortcut.key === event.key.toLowerCase() && shortcut.shift === event.shiftKey
-  );
-  if (!match) return;
+  if (event.repeat || dialogOpen() || isEditableTarget(event.target)) return;
+  const binding = matchShortcut(event, keymap);
+  if (!binding) return;
   event.preventDefault();
-  match.action();
+  runShortcut(binding);
 });
 
 const layersList = document.getElementById("layersList");
@@ -377,9 +429,60 @@ function documentLine(doc) {
   return `${size} · Profile: ${doc.profile.name}${shown}`;
 }
 
+const historyList = document.getElementById("historyList");
+
+function renderHistory(doc) {
+  const { past, present, future } = doc.history;
+  const steps = [];
+  if (present) {
+    past.forEach((entry, index) => steps.push({ entry, index, kind: "past" }));
+    steps.push({ entry: present, index: past.length, kind: "present" });
+    future.forEach((entry, offset) => {
+      steps.push({ entry, index: past.length + 1 + offset, kind: "future" });
+    });
+  }
+  historyList.replaceChildren();
+  for (const step of steps) {
+    const item = document.createElement("li");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "history-step";
+    button.dataset.index = String(step.index);
+    button.textContent = step.entry.label;
+    if (step.kind === "present") button.setAttribute("aria-current", "step");
+    if (step.kind === "future") button.dataset.future = "true";
+    item.append(button);
+    historyList.append(item);
+  }
+}
+
+async function jumpHistory(index) {
+  try {
+    const entry = await canvas.jumpTo(index);
+    if (entry) setStatus(`History: ${entry.label}.`);
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+}
+
+historyList.addEventListener("click", (event) => {
+  const button = event.target.closest(".history-step");
+  if (!button) return;
+  jumpHistory(Number(button.dataset.index));
+});
+
+historyList.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  const button = event.target.closest(".history-step");
+  if (!button || event.target !== button) return;
+  event.preventDefault();
+  jumpHistory(Number(button.dataset.index));
+});
+
 function renderPanel() {
   const doc = canvas.doc;
   layersList.replaceChildren(renderRows(doc.layers, doc.activeId, 0));
+  renderHistory(doc);
   const active = activeNode();
   for (const id of ["layerAdd", "layerGroup", "layerDuplicate", "layerDelete"]) {
     document.getElementById(id).disabled = doc.busy || !doc.hasContent;
@@ -606,6 +709,7 @@ window.app = Object.freeze({
   run: canvas.run,
   undo: canvas.undo,
   redo: canvas.redo,
+  jumpTo: canvas.jumpTo,
   activate: canvas.activate,
   setForeground: canvas.setForeground,
   commands: canvas.commands,
@@ -636,18 +740,214 @@ consoleForm.addEventListener("submit", async (event) => {
   }
 });
 
-document.getElementById("downloadButton").addEventListener("click", async () => {
+document.getElementById("downloadButton").addEventListener("click", () => {
+  openExportDialog();
+});
+
+const exportDialog = document.getElementById("exportDialog");
+const exportForm = document.getElementById("exportForm");
+const exportFilename = document.getElementById("exportFilename");
+const exportFormat = document.getElementById("exportFormat");
+const exportQualityRow = document.getElementById("exportQualityRow");
+const exportQuality = document.getElementById("exportQuality");
+const exportQualityValue = document.getElementById("exportQualityValue");
+const exportNote = document.getElementById("exportNote");
+const exportError = document.getElementById("exportError");
+const confirmExport = document.getElementById("confirmExport");
+
+const EXPORT_EXTENSIONS = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/webp": "webp",
+  "application/x-msho": "msho",
+  "application/zip": "msho",
+};
+
+const DOWNLOAD_LABELS = {
+  png: "PNG",
+  jpg: "JPEG",
+  webp: "WebP",
+  msho: "Project",
+};
+
+function filenameStem(value) {
+  const trimmed = value.trim().replace(/\.[^.]+$/, "");
+  const clean = trimmed.replace(/[\\/:*?"<>|]/g, "").trim();
+  return clean || "edited";
+}
+
+function syncExportOptions() {
+  const lossy = exportFormat.value === "image/jpeg" || exportFormat.value === "image/webp";
+  exportQualityRow.hidden = !lossy;
+  exportQualityValue.value = String(Math.round(Number(exportQuality.value) * 100));
+  const hasProfile = Boolean(canvas.doc.profile?.name);
+  exportNote.textContent = lossy && hasProfile ? "Profile not embedded." : "";
+}
+
+function openExportDialog() {
   if (!canvas.doc.hasContent) return;
-  setStatus("Preparing PNG…");
+  exportError.textContent = "";
+  if (!exportFilename.value.trim()) exportFilename.value = "edited";
+  syncExportOptions();
+  exportDialog.showModal();
+  exportFilename.focus();
+  exportFilename.select();
+}
+
+exportFormat.addEventListener("change", syncExportOptions);
+exportQuality.addEventListener("input", syncExportOptions);
+
+for (const id of ["closeExport", "cancelExport"]) {
+  document.getElementById(id).addEventListener("click", () => {
+    exportDialog.close();
+  });
+}
+
+exportForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!canvas.doc.hasContent) return;
+  const format = exportFormat.value;
+  const lossy = format === "image/jpeg" || format === "image/webp";
+  const hasProfile = Boolean(canvas.doc.profile?.name);
+  confirmExport.disabled = true;
+  exportError.textContent = "";
+  setStatus("Preparing export…");
   try {
-    const blob = await canvas.toBlob();
+    const blob =
+      format === "project"
+        ? await canvas.toProjectBlob()
+        : await canvas.toBlob({
+            type: format,
+            quality: lossy ? Number(exportQuality.value) : undefined,
+          });
     if (!blob) return;
-    downloadBlob(blob, "processedImage.png");
-    setStatus("PNG download started.");
+    const actual = blob.type || (format === "project" ? "application/x-msho" : format);
+    const fellBack = format !== "project" && actual !== format;
+    const extension = EXPORT_EXTENSIONS[actual] || EXPORT_EXTENSIONS[format] || "png";
+    downloadBlob(blob, `${filenameStem(exportFilename.value)}.${extension}`);
+    exportDialog.close();
+    const parts = [];
+    if (fellBack) {
+      const savedAs = DOWNLOAD_LABELS[extension] || extension.toUpperCase();
+      parts.push(
+        `${format === "image/webp" ? "WebP" : "That format"} is not supported here, so the file was saved as ${savedAs}.`
+      );
+    } else if (format === "project") {
+      parts.push("Project download started.");
+    } else {
+      parts.push(`${DOWNLOAD_LABELS[extension] || extension.toUpperCase()} download started.`);
+    }
+    if (lossy && hasProfile) parts.push("Profile not embedded.");
+    setStatus(parts.join(" "));
+  } catch (error) {
+    exportError.textContent = error.message;
+    setStatus(error.message, true);
+  } finally {
+    confirmExport.disabled = false;
+  }
+});
+
+const restoreDialog = document.getElementById("restoreDialog");
+const restoreMessage = document.getElementById("restoreMessage");
+const recovery = createAutosave({
+  onQuotaExceeded() {
+    setStatus("Autosave paused: storage is full.", true);
+  },
+  onError(error) {
+    setStatus(error?.message || "Autosave failed.", true);
+  },
+});
+
+function clockOf(savedAt) {
+  const date = new Date(savedAt);
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${hours}:${minutes}`;
+}
+
+let autosaveArmed = false;
+let scheduledRevision = canvas.doc.revision;
+
+async function persistRecovery() {
+  const blob = await canvas.toProjectBlob();
+  if (!blob || !canvas.doc.hasContent) return;
+  const doc = canvas.doc;
+  await recovery.write(blob, {
+    savedAt: Date.now(),
+    width: doc.width,
+    height: doc.height,
+    label: doc.history.present?.label ?? "Document",
+  });
+}
+
+function considerAutosave() {
+  if (!autosaveArmed || restoreDialog.open) return;
+  const doc = canvas.doc;
+  if (doc.busy || doc.revision === scheduledRevision) return;
+  scheduledRevision = doc.revision;
+  if (!doc.hasContent) return;
+  recovery.schedule(() => persistRecovery());
+}
+
+window.addEventListener("canvasstatechange", considerAutosave);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") recovery.flush();
+});
+
+restoreDialog.addEventListener("cancel", (event) => {
+  event.preventDefault();
+});
+
+let pendingRecovery = null;
+
+document.getElementById("confirmRestore").addEventListener("click", async () => {
+  const record = pendingRecovery;
+  if (!record) return;
+  setStatus("Restoring autosave…");
+  try {
+    await canvas.loadProject(record.blob);
+    pendingRecovery = null;
+    restoreDialog.close();
+    considerAutosave();
+    await showDocument("Restored the autosaved project.");
   } catch (error) {
     setStatus(error.message, true);
   }
 });
+
+document.getElementById("discardRestore").addEventListener("click", async () => {
+  try {
+    await recovery.clear();
+    pendingRecovery = null;
+    restoreDialog.close();
+    setStatus("Discarded the autosaved project.");
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+});
+
+async function startRecovery() {
+  try {
+    const writer = await recovery.acquireWriter();
+    await recovery.requestPersistence();
+    if (!writer) {
+      setStatus("Autosave is on in another tab.");
+      return;
+    }
+    autosaveArmed = true;
+    const record = await recovery.read();
+    if (record && !canvas.doc.hasContent) {
+      pendingRecovery = record;
+      restoreMessage.textContent = `Restore work from ${clockOf(record.savedAt)}, ${record.width} × ${record.height}`;
+      restoreDialog.showModal();
+    }
+    considerAutosave();
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+}
+
+startRecovery();
 
 window.addEventListener("canvaserror", (event) => {
   setStatus(event.detail.message, true);

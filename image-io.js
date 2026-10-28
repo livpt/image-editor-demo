@@ -82,12 +82,14 @@ export async function decodeExternalImage(url, overrides) {
   return { source, method: "external-url", profile: null, profileKnown: false, dispose: () => {} };
 }
 
-export function canvasToBlob(canvas, type = "image/png") {
+export function canvasToBlob(canvas, type = "image/png", quality) {
   return new Promise((resolve, reject) => {
-    canvas.toBlob((blob) => {
+    const finish = (blob) => {
       if (blob) resolve(blob);
       else reject(new Error("The image could not be exported."));
-    }, type);
+    };
+    if (quality === undefined) canvas.toBlob(finish, type);
+    else canvas.toBlob(finish, type, quality);
   });
 }
 

@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   addLayer,
   createDraft,
+  createDraftFromTree,
   deleteNode,
   drawDocument,
   duplicateNode,
@@ -381,4 +382,88 @@ test("freezeDocument closes what it created when a copy fails or has the wrong s
   const untouched = fakeEnv();
   await assert.rejects(freezeDocument(huge, untouched), invalid("megapixel"));
   assert.equal(untouched.created.length, 0);
+});
+
+test("createDraftFromTree keeps ids and rejects a broken tree", () => {
+  const buffer = new Float32Array([1, 2, 3, 4]);
+  const doc = createDraftFromTree({
+    width: 1,
+    height: 1,
+    nextId: 4,
+    profile: { name: "Test", bytes: new Uint8Array([1]) },
+    profileKnown: true,
+    tree: [
+      {
+        kind: "pixel",
+        id: 1,
+        name: "  Background ",
+        visible: true,
+        opacity: 100,
+        blend: "normal",
+        pixels: px("bg"),
+        buffer,
+      },
+      {
+        kind: "group",
+        id: 3,
+        name: "Group",
+        visible: false,
+        opacity: 40,
+        blend: "multiply",
+        children: [
+          {
+            kind: "pixel",
+            id: 2,
+            name: "Paint",
+            visible: true,
+            opacity: 80,
+            blend: "screen",
+            pixels: px("paint"),
+          },
+        ],
+      },
+    ],
+  });
+
+  assert.equal(doc.nextId, 4);
+  assert.equal(doc.tree[0].name, "Background");
+  assert.equal(doc.tree[0].buffer, buffer);
+  assert.equal(doc.tree[1].visible, false);
+  assert.equal(doc.tree[1].children[0].id, 2);
+  assert.equal(Object.isFrozen(doc.tree[1].children[0]), true);
+  assert.equal(doc.profile.name, "Test");
+
+  assert.throws(
+    () => createDraftFromTree({ width: 1, height: 1, nextId: 2, tree: doc.tree }),
+    invalid("nextId")
+  );
+  assert.throws(
+    () =>
+      createDraftFromTree({
+        width: 1,
+        height: 1,
+        nextId: 3,
+        tree: [
+          { kind: "pixel", id: 1, name: "A", visible: true, opacity: 100, blend: "normal", pixels: px("a") },
+          { kind: "pixel", id: 1, name: "B", visible: true, opacity: 100, blend: "normal", pixels: px("b") },
+        ],
+      }),
+    invalid("duplicate layer id 1")
+  );
+  assert.throws(
+    () =>
+      createDraftFromTree({
+        width: 1,
+        height: 1,
+        nextId: 2,
+        tree: [
+          { kind: "pixel", id: 1, name: "A", visible: true, opacity: 140, blend: "normal", pixels: px("a") },
+        ],
+      }),
+    invalid("opacity")
+  );
+  assert.throws(
+    () => createDraftFromTree({ width: 1, height: 1, nextId: 1, tree: [] }),
+    invalid("pixel layer")
+  );
 });

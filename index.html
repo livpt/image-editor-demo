@@ -17,14 +17,14 @@
             <span>Draw</span>
           </summary>
           <div class="tool-menu">
-            <button type="button" id="penDraw">Pen</button>
-            <button type="button" id="lineDraw">Line</button>
-            <button type="button" id="rectangleDraw">Rectangle</button>
-            <button type="button" id="ellipseDraw">Ellipse</button>
+            <button type="button" id="penDraw" aria-keyshortcuts="P">Pen</button>
+            <button type="button" id="lineDraw" aria-keyshortcuts="U">Line</button>
+            <button type="button" id="rectangleDraw" aria-keyshortcuts="U">Rectangle</button>
+            <button type="button" id="ellipseDraw" aria-keyshortcuts="U">Ellipse</button>
           </div>
         </details>
 
-        <button type="button" class="control-item tool-button" id="cropButton">
+        <button type="button" class="control-item tool-button" id="cropButton" aria-keyshortcuts="C">
           <span class="tool-icon" aria-hidden="true" style="--icon: url(./assets/images/crop-symbol.svg)"></span>
           <span>Crop</span>
         </button>
@@ -60,12 +60,12 @@
 
         <span class="tool-sep" aria-hidden="true"></span>
 
-        <button type="button" class="control-item tool-button" id="undoButton">
+        <button type="button" class="control-item tool-button" id="undoButton" aria-keyshortcuts="Control+Z">
           <span class="tool-icon" aria-hidden="true" style="--icon: url(./assets/images/undo.svg)"></span>
           <span>Undo</span>
         </button>
 
-        <button type="button" class="control-item tool-button" id="redoButton">
+        <button type="button" class="control-item tool-button" id="redoButton" aria-keyshortcuts="Control+Shift+Z Control+Y">
           <span class="tool-icon" aria-hidden="true" style="--icon: url(./assets/images/redo.svg)"></span>
           <span>Redo</span>
         </button>
@@ -76,6 +76,7 @@
           type="button"
           class="control-item tool-button"
           id="downloadButton"
+          aria-keyshortcuts="Control+S"
         >
           <span class="tool-icon" aria-hidden="true" style="--icon: url(./assets/images/download.svg)"></span>
           <span>Save</span>
@@ -94,7 +95,7 @@
         <p>Drag a picture anywhere onto this page, or choose a local file.</p>
         <label class="upload-button">
           Choose image
-          <input id="fileInput" type="file" accept="image/*" />
+          <input id="fileInput" type="file" accept="image/png,image/jpeg,image/webp,.msho" aria-keyshortcuts="Control+O" />
         </label>
       </div>
 
@@ -150,6 +151,10 @@
         <p class="colour-readout">Cursor <span id="cursorHex">none</span> <span id="cursorRgb"></span></p>
         <p id="documentInfo" class="document-info"></p>
       </section>
+      <section id="historyPanel" class="history-panel" aria-label="History">
+        <h2>History</h2>
+        <ol id="historyList" class="history-list"></ol>
+      </section>
     </aside>
 
     <dialog id="resolutionDialog" aria-labelledby="resolutionTitle">
@@ -188,6 +193,60 @@
           <button type="submit" class="primary-button" id="saveResolution">
             Save changes
           </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="exportDialog" aria-labelledby="exportTitle">
+      <form id="exportForm">
+        <div class="dialog-header">
+          <h2 id="exportTitle">Export</h2>
+          <button id="closeExport" class="icon-button" type="button" aria-label="Close">
+            ×
+          </button>
+        </div>
+
+        <label>
+          Filename
+          <input id="exportFilename" type="text" value="edited" required spellcheck="false" />
+        </label>
+
+        <label>
+          Format
+          <select id="exportFormat">
+            <option value="image/png">PNG</option>
+            <option value="image/jpeg">JPEG</option>
+            <option value="image/webp">WebP</option>
+            <option value="project">Project</option>
+          </select>
+        </label>
+
+        <label id="exportQualityRow" class="export-quality" hidden>
+          Quality
+          <input id="exportQuality" type="range" min="0.01" max="1" step="0.01" value="0.92" />
+          <output id="exportQualityValue" for="exportQuality">92</output>
+        </label>
+
+        <p id="exportNote" class="form-note"></p>
+        <p class="form-note">Ctrl+T is reserved by the browser and is not available.</p>
+        <p id="exportError" class="form-error" role="alert"></p>
+
+        <div class="dialog-actions">
+          <button type="button" id="cancelExport">Cancel</button>
+          <button type="submit" class="primary-button" id="confirmExport">Export</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="restoreDialog" aria-labelledby="restoreTitle">
+      <form id="restoreForm">
+        <div class="dialog-header">
+          <h2 id="restoreTitle">Restore work</h2>
+        </div>
+        <p id="restoreMessage"></p>
+        <div class="dialog-actions">
+          <button type="button" id="discardRestore">Discard</button>
+          <button type="button" class="primary-button" id="confirmRestore">Restore</button>
         </div>
       </form>
     </dialog>

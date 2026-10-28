@@ -102,6 +102,23 @@ test("converts a canvas to a PNG blob", async () => {
   assert.equal(result, blob);
 });
 
+test("forwards a lossy type and quality to the canvas", async () => {
+  let seen = null;
+  const blob = { type: "image/webp" };
+  const result = await canvasToBlob(
+    {
+      toBlob(callback, type, quality) {
+        seen = { type, quality };
+        callback(blob);
+      },
+    },
+    "image/webp",
+    0.75
+  );
+  assert.equal(result, blob);
+  assert.deepEqual(seen, { type: "image/webp", quality: 0.75 });
+});
+
 test("downloads and revokes a temporary object URL", () => {
   const revoked = [];
   const anchor = {

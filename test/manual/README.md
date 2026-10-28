@@ -23,6 +23,10 @@ Run the checklist in the current stable Chrome, Firefox, and Safari releases. Re
 - Apply Grayscale, Threshold, Sepia, and Invert; undo and redo each result.
 - Make 25 edits and confirm no more than 20 undo operations are retained.
 - Export twice and confirm each PNG contains the latest committed image.
+- Export JPEG and WebP with the quality slider below 100 and confirm the files are smaller than a PNG of the same image. JPEG and WebP do not contain an embedded ICC profile; the status says `Profile not embedded.` when the document has one.
+- Save a `.msho` project, reopen it, and confirm the pixel diff against the image before export is 0, including a layer that has a float buffer (apply Grayscale, save, reopen, undo the reopen is unavailable, and the pixels match).
+- In Safari, export WebP and confirm the file extension follows `blob.type` when the browser falls back to PNG. The status names that fallback.
+- Fill IndexedDB until a write throws `QuotaExceededError` (devtools Application panel, or a very large float document) and confirm the status says `Autosave paused: storage is full.`
 - Save a PNG that was opened with an embedded profile and confirm the exported file still has an `iCCP` chunk (`pngcheck -v` or `exiftool`). A file with no profile exports without one.
 - Confirm all controls are reachable by keyboard and focus remains visible.
 - Check the browser console for uncaught errors.

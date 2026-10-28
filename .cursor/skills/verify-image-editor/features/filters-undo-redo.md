@@ -1,6 +1,6 @@
 # Filters, undo and redo
 
-Filter applies Grayscale, Threshold, Sepia or Invert colors to the whole image in one step and reports how long it took. Undo and Redo walk a history of up to 20 prior states; a new edit after undo discards the redo branch. Save downloads the committed image as `processedImage.png`.
+Filter applies Grayscale, Threshold, Sepia or Invert colors to the whole image in one step and reports how long it took. Undo and Redo walk a history of up to 20 prior states; a new edit after undo discards the redo branch. Save opens the export dialog; exporting PNG downloads the committed image.
 
 ## Sub-features
 
@@ -10,7 +10,7 @@ Filter applies Grayscale, Threshold, Sepia or Invert colors to the whole image i
 - `history-redo` reapplies the undone state.
 - `history-branch` clears `Redo` when a new edit follows an undo.
 - `history-cap` keeps at most 20 undo steps.
-- `export-save` starts a PNG download and reports `PNG download started.`.
+- `export-save` opens the export dialog and, with PNG selected, reports `PNG download started.`.
 
 ## How to get to it (user POV)
 
@@ -33,7 +33,7 @@ Preconditions:
 - **Threshold.** `browser_click` `Filter`, `Threshold`. Status is `Threshold applied in N ms.` with no canvas-filter suffix; each sample is `0,0,0` or `255,255,255`.
 - **Branch.** `browser_click` `Undo` twice, then apply `Sepia`. `canRedo: false`.
 - **Cap.** Apply filters 25 times alternating `Invert colors` and `Grayscale`. Then click `Undo` until it disables; count the clicks. Expect exactly 20.
-- **Export.** `browser_click` `Save`. Status reads `PNG download started.`. The file itself is not inspectable here; record that explicitly.
+- **Export.** `browser_click` `Save`. The export dialog opens with PNG selected. `browser_click` `Export`. Status reads `PNG download started.`. The file itself is not inspectable here; record that explicitly.
 - **Proof.** Save all `read-state.js` outputs to `filters-undo-redo.json` and a screenshot `filters-sepia-after.png` with the status line visible.
 
 ## Gotchas
